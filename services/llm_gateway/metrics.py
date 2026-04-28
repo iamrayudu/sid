@@ -14,14 +14,13 @@ class MetricsTracker:
         success: bool,
         cost_per_1k: float = 0.0
     ) -> LLMCallRecord:
-        
-        # Calculate cost
+
         total_tokens = prompt_tokens + completion_tokens
         cost = (total_tokens / 1000.0) * cost_per_1k
 
         return LLMCallRecord(
             id=str(uuid.uuid4()),
-            timestamp=datetime.datetime.utcnow().isoformat() + "Z",
+            timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
             model=model,
             purpose=purpose,
             prompt_tokens=prompt_tokens,

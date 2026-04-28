@@ -14,33 +14,10 @@ from services.memory import get_store
 router = APIRouter()
 
 
-# ---- Module-level recording state ---------------------------------------
 _recording: bool = False
 _current_session_id: Optional[str] = None
 
 
-def _queue_depth() -> int:
-    try:
-        from services.processing import queue as _q  # type: ignore
-        # Try a few common attribute names
-        for attr in ("queue_depth", "depth", "size"):
-            fn = getattr(_q, attr, None)
-            if callable(fn):
-                try:
-                    return int(fn())
-                except Exception:
-                    pass
-        q = getattr(_q, "_queue", None) or getattr(_q, "queue", None)
-        if q is not None and hasattr(q, "qsize"):
-            return int(q.qsize())
-    except ImportError:
-        pass
-    except Exception:
-        pass
-    return 0
-
-
-# ---- Request/response models --------------------------------------------
 class StartRequest(BaseModel):
     session_id: Optional[str] = None
 
@@ -66,7 +43,14 @@ class StatusResponse(BaseModel):
     queue_depth: int
 
 
-# ---- Endpoints ----------------------------------------------------------
+def _queue_depth() -> int:
+    try:
+        from services.processing import queue_depth
+        return queue_depth()
+    except Exception:
+        return 0
+
+
 @router.post("/start", response_model=StartResponse)
 async def start_recording(body: Optional[StartRequest] = None) -> StartResponse:
     global _recording, _current_session_id
@@ -75,7 +59,7 @@ async def start_recording(body: Optional[StartRequest] = None) -> StartResponse:
         raise HTTPException(status_code=409, detail="Already recording")
 
     session_id = (body.session_id if body else None) or str(uuid.uuid4())
-    started_at = datetime.datetime.utcnow().isoformat() + "Z"
+    started_at = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
     try:
         get_voice_service().start_recording()
@@ -112,6 +96,15 @@ async def stop_recording(body: StopRequest):
         await get_store().save_raw_chunk(chunk)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save chunk: {e}")
+
+    # Fire-and-forget: enqueue for async processing (Stage 1 + Stage 2 pipeline)
+    try:
+        from services.processing import enqueue
+        await enqueue(chunk)
+    except Exception as e:
+        # Non-fatal: chunk is saved in DB, processing can be retried
+        import logging
+        logging.getLogger("sid.api.voice").warning("Failed to enqueue chunk %s: %s", chunk.chunk_id, e)
 
     return StopResponse(
         chunk_id=chunk.chunk_id,

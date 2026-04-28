@@ -24,7 +24,6 @@ class MemoryStore:
 
     async def init_memory(self):
         await self.db_manager.init_db()
-        # vector_store lazy loads on first method call
 
     async def save_raw_chunk(self, chunk: RawChunk) -> str:
         async with self.db_manager.get_connection() as db:
@@ -66,12 +65,29 @@ class MemoryStore:
         updates["updated_at"] = _utcnow_iso()
         columns = ", ".join(f"{k} = ?" for k in updates.keys())
         values = list(updates.values())
-
         values.append(thought_id)
 
         async with self.db_manager.get_connection() as db:
             await db.execute(
                 f"UPDATE thoughts SET {columns} WHERE id = ?",
+                values
+            )
+            await db.commit()
+
+    async def update_extraction(self, extraction_id: str, updates: dict) -> None:
+        if not updates:
+            return
+
+        if updates.get("status") == "done" and "completed_at" not in updates:
+            updates["completed_at"] = _utcnow_iso()
+
+        columns = ", ".join(f"{k} = ?" for k in updates.keys())
+        values = list(updates.values())
+        values.append(extraction_id)
+
+        async with self.db_manager.get_connection() as db:
+            await db.execute(
+                f"UPDATE extractions SET {columns} WHERE id = ?",
                 values
             )
             await db.commit()
@@ -117,12 +133,6 @@ class MemoryStore:
         date: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> None:
-        """Embed text locally and upsert into the LanceDB vector store.
-
-        The store owns the embedding step so callers don't need to know about
-        the gateway. We import the gateway lazily to avoid circular imports.
-        """
-        # Lazy import to avoid circular dependency between memory and llm_gateway
         from services.llm_gateway import get_gateway
         gateway = get_gateway()
 
@@ -147,7 +157,6 @@ class MemoryStore:
             return Thought(**dict(row))
 
     async def search(self, query: str, limit: int = 10) -> List[SearchResult]:
-        # Avoid circular import by requesting Gateway dynamically
         from services.llm_gateway import get_gateway
         gateway = get_gateway()
 
@@ -158,12 +167,9 @@ class MemoryStore:
         async with self.db_manager.get_connection() as db:
             for item in lance_results:
                 thought_id = item["thought_id"]
-                # LanceDB returns cosine *distance* in _distance (when metric=cosine).
-                # Map distance -> similarity, clamping to [0, 1].
                 distance = item.get("_distance", 1.0)
                 similarity = max(0.0, 1.0 - float(distance))
 
-                # Retrieve fully hydrated thought
                 cursor = await db.execute("SELECT * FROM thoughts WHERE id = ?", (thought_id,))
                 row = await cursor.fetchone()
                 if row:
@@ -179,12 +185,7 @@ class MemoryStore:
 
         return results
 
-    # ------------------------------------------------------------------
-    # Additional read methods used by FastAPI + Phase 2 agents
-    # ------------------------------------------------------------------
-
     async def get_timeline(self, date: str) -> List[Thought]:
-        """Get all thoughts for a given date (YYYY-MM-DD), ordered by created_at ASC."""
         async with self.db_manager.get_connection() as db:
             cursor = await db.execute(
                 """
@@ -198,7 +199,6 @@ class MemoryStore:
             return [Thought(**dict(r)) for r in rows]
 
     async def get_pending_tasks(self) -> List[Extraction]:
-        """All extractions where status='pending', ordered by priority ASC, then by id."""
         async with self.db_manager.get_connection() as db:
             cursor = await db.execute(
                 """
@@ -211,7 +211,6 @@ class MemoryStore:
             return [Extraction(**dict(r)) for r in rows]
 
     async def get_unchecked_count(self, since_iso: str) -> int:
-        """Count thoughts where created_at > since_iso (used by check-in trigger)."""
         async with self.db_manager.get_connection() as db:
             cursor = await db.execute(
                 "SELECT COUNT(*) AS c FROM thoughts WHERE created_at > ?",
@@ -221,16 +220,13 @@ class MemoryStore:
             return int(row["c"]) if row else 0
 
     async def get_stats(self) -> StatsResult:
-        """Compute aggregate stats for the dashboard."""
         today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
 
         async with self.db_manager.get_connection() as db:
-            # Total thoughts
             cur = await db.execute("SELECT COUNT(*) AS c FROM thoughts")
             row = await cur.fetchone()
             total_thoughts = int(row["c"]) if row else 0
 
-            # Thoughts today
             cur = await db.execute(
                 "SELECT COUNT(*) AS c FROM thoughts WHERE DATE(created_at) = ?",
                 (today,),
@@ -238,14 +234,12 @@ class MemoryStore:
             row = await cur.fetchone()
             thoughts_today = int(row["c"]) if row else 0
 
-            # Pending tasks
             cur = await db.execute(
                 "SELECT COUNT(*) AS c FROM extractions WHERE status = 'pending'"
             )
             row = await cur.fetchone()
             pending_tasks = int(row["c"]) if row else 0
 
-            # LLM calls today
             cur = await db.execute(
                 "SELECT COUNT(*) AS c FROM llm_calls WHERE DATE(timestamp) = ?",
                 (today,),
@@ -253,7 +247,6 @@ class MemoryStore:
             row = await cur.fetchone()
             llm_calls_today = int(row["c"]) if row else 0
 
-            # Token sums today, grouped by model
             cur = await db.execute(
                 """
                 SELECT model,
@@ -277,7 +270,6 @@ class MemoryStore:
                 elif r["model"] == settings.deep_model:
                     tokens_today_deep += tokens
 
-            # Avg latencies by purpose
             cur = await db.execute(
                 "SELECT AVG(latency_ms) AS a FROM llm_calls WHERE purpose = 'stage1'"
             )
@@ -290,12 +282,17 @@ class MemoryStore:
             row = await cur.fetchone()
             avg_latency_stage2_ms = float(row["a"]) if row and row["a"] is not None else 0.0
 
-        # DB size on disk
         try:
             db_size_bytes = os.path.getsize(self.db_manager.db_path)
             db_size_mb = db_size_bytes / (1024 * 1024)
         except OSError:
             db_size_mb = 0.0
+
+        from services.processing import queue as _q  # type: ignore
+        try:
+            queue_depth = _q.queue_depth()
+        except Exception:
+            queue_depth = 0
 
         return StatsResult(
             total_thoughts=total_thoughts,
@@ -306,12 +303,11 @@ class MemoryStore:
             tokens_today_deep=tokens_today_deep,
             avg_latency_stage1_ms=avg_latency_stage1_ms,
             avg_latency_stage2_ms=avg_latency_stage2_ms,
-            processing_queue_depth=0,  # Set by caller if they know it; Phase 1 has no queue.
+            processing_queue_depth=queue_depth,
             db_size_mb=db_size_mb,
         )
 
     async def save_daily_reflection(self, date: str, reflection: str) -> None:
-        """Upsert evening_reflection into daily_records for a given date."""
         async with self.db_manager.get_connection() as db:
             cursor = await db.execute(
                 "SELECT date FROM daily_records WHERE date = ?", (date,)
@@ -333,7 +329,6 @@ class MemoryStore:
             await db.commit()
 
     async def get_unprocessed_thoughts(self, limit: int = 10) -> List[Thought]:
-        """Thoughts where processing_stage='raw'. Used by Phase 2 queue worker."""
         async with self.db_manager.get_connection() as db:
             cursor = await db.execute(
                 """
@@ -347,9 +342,6 @@ class MemoryStore:
             rows = await cursor.fetchall()
             return [Thought(**dict(r)) for r in rows]
 
-    # ------------------------------------------------------------------
-
     def _get_settings(self):
-        # Lazy fetch settings to avoid coupling at import time
         from config.settings import get_settings
         return get_settings()

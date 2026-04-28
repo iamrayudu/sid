@@ -1,7 +1,9 @@
 import time
 import asyncio
+import logging
 from typing import Type, TypeVar, List, Dict, Any, Optional
 
+import httpx
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
@@ -10,28 +12,41 @@ from config.settings import get_settings
 from shared.schemas.models import LLMCallRecord
 from services.llm_gateway.metrics import MetricsTracker
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T", bound=BaseModel)
+
 
 class GatewayError(Exception):
     pass
+
 
 class LLMGateway:
     def __init__(self):
         self.settings = get_settings()
         self.fast_model = self.settings.fast_model
         self.deep_model = self.settings.deep_model
-        
-        # We rely on Ollama providing the OpenAI-compatible /v1 endpoints
+
         self.client = AsyncOpenAI(
             base_url=f"{self.settings.ollama_base_url}/v1",
-            api_key="ollama", # dummy key for standard compliancy
+            api_key="ollama",
             timeout=120.0
         )
-        
-        # Load local embedding model immediately (approx 380MB, runs locally) 
-        # Using default PyTorch backend. ONNX can be added later if CPU load is too high.
+
         self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        
+
+    async def health_check(self) -> bool:
+        """Verify Ollama is reachable. Returns True if healthy, logs warning and returns False otherwise."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{self.settings.ollama_base_url}/api/tags")
+                resp.raise_for_status()
+            logger.info("Ollama health check passed.")
+            return True
+        except Exception as e:
+            logger.warning("Ollama health check failed (Ollama may not be running): %s", e)
+            return False
+
     async def _record_call(
         self,
         model: str,
@@ -41,7 +56,6 @@ class LLMGateway:
         latency_ms: int,
         success: bool
     ):
-        """Asynchronously writes the metric to SQLite without blocking the main event flow."""
         record = MetricsTracker.create_record(
             model=model,
             purpose=purpose,
@@ -49,33 +63,29 @@ class LLMGateway:
             completion_tokens=completion_tokens,
             latency_ms=latency_ms,
             success=success,
-            cost_per_1k=0.0 # Standard local Ollama cost is 0
+            cost_per_1k=0.0
         )
-        
-        # Lazy import resolves circular dependency between Gateway and MemoryStore
+
         async def do_write():
             from services.memory import get_store
             store = get_store()
             if store:
                 await store.write_llm_call(record)
-                
+
         asyncio.create_task(do_write())
-        
+
     async def fast(self, prompt: str, schema: Type[T]) -> T:
-        """Stage 1: Fast reasoning (Classification, extraction, cleanup)."""
         return await self._structured_call(self.fast_model, "stage1", prompt, schema)
-        
+
     async def deep(self, prompt: str, schema: Type[T]) -> T:
-        """Stage 2: Deep reasoning (Complex relationships, intent, long extraction)."""
         return await self._structured_call(self.deep_model, "stage2", prompt, schema)
-        
+
     async def chat(self, messages: List[Dict[str, str]], purpose: str = "agent_chat") -> str:
-        """Unstructured conversational agent call."""
         start_time = time.perf_counter()
         success = True
         prompt_tokens = 0
         completion_tokens = 0
-        
+
         try:
             response = await self.client.chat.completions.create(
                 model=self.deep_model,
@@ -105,9 +115,8 @@ class LLMGateway:
         success = True
         prompt_tokens = 0
         completion_tokens = 0
-        
+
         try:
-            # Format using Ollama's native JSON Schema structured output
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
@@ -119,17 +128,31 @@ class LLMGateway:
                     }
                 }
             )
-            
+
             raw_content = response.choices[0].message.content
-            
+
             if response.usage:
                 prompt_tokens = response.usage.prompt_tokens
                 completion_tokens = response.usage.completion_tokens
-                
-            # Parse the model's raw string output directly purely into Pydantic
-            # Retries can be implemented here if JSON parsing fails natively.
-            return schema.model_validate_json(raw_content)
-            
+
+            try:
+                return schema.model_validate_json(raw_content)
+            except Exception:
+                # Retry once with explicit JSON instruction
+                retry_prompt = f"Respond ONLY with valid JSON matching this schema.\n\n{prompt}"
+                response2 = await self.client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": retry_prompt}],
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": schema.__name__,
+                            "schema": schema.model_json_schema()
+                        }
+                    }
+                )
+                return schema.model_validate_json(response2.choices[0].message.content)
+
         except Exception as e:
             success = False
             raise GatewayError(f"Ollama structured call failed: {e}")
@@ -143,13 +166,11 @@ class LLMGateway:
                 latency_ms=latency_ms,
                 success=success
             )
-            
+
     def embed(self, text: str) -> List[float]:
-        """Provides local embeddings for semantic search."""
         vector = self.embedder.encode(text)
         return vector.tolist()
-        
+
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Provides batch embeddings locally."""
         vectors = self.embedder.encode(texts)
         return vectors.tolist()
