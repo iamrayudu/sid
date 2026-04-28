@@ -282,27 +282,38 @@ INTERFACE
 - Bug fixed: session lifecycle at /voice/start and /voice/stop
 - Bug fixed: voice models lazy-load on first recording
 
-### Phase 3 🔨 In Progress
-- [ ] config/models.yaml (purpose-based routing)
-- [ ] Schema migration (task lifecycle, milestones, closures, weekly_records)
-- [ ] services/tts/ (macOS say, non-blocking)
-- [ ] LLM Gateway: purpose-based routing from models.yaml
-- [ ] services/agent/fsm.py
-- [ ] services/agent/scheduler.py
-- [ ] services/agent/routines/morning.py
-- [ ] services/agent/routines/evening.py
-- [ ] services/agent/routines/checkin.py
-- [ ] services/agent/routines/weekly.py
-- [ ] services/agent/chat_agent.py (interrogation mode)
-- [ ] services/agent/critique.py (behavioral profiling)
-- [ ] /api/agent/* routes (all real implementations)
-- [ ] macOS notifications
+### Phase 3 ✅ Complete (commit f352c48)
+- [x] config/models.yaml — purpose-based routing (11 purposes mapped)
+- [x] services/tts/ — macOS `say` non-blocking with interruption + Piper upgrade path
+- [x] LLM Gateway — `gateway.generate(purpose, ...)`, `chat_for(purpose, ...)`, lazy embedder
+- [x] services/agent/fsm.py — 8-state FSM, CAPTURING blocks all interrupts, suppress() API
+- [x] services/agent/scheduler.py — APScheduler: morning 8am, evening 9pm, checkin 4hr, weekly Sun 8pm
+- [x] services/agent/routines/morning.py — top-3 priorities + carry-forward + daily anchor
+- [x] services/agent/routines/evening.py — journal + done/pending tally + pattern + tomorrow prep
+- [x] services/agent/routines/checkin.py — brief status question on recent thoughts
+- [x] services/agent/routines/weekly.py — behavioral autopsy with execution gap analysis
+- [x] services/agent/chat_agent.py — ReAct tool-calling agent + interrogation mode
+- [x] services/agent/critique.py — behavioral profiling, negligence detection, gap score
+- [x] /api/agent/* routes — chat, status, suppress, morning, evening, weekly, critique, daily
+- [x] services/document_agent/ — watchdog folder watcher + PyMuPDF + text/markdown extractor
+- [x] main.py + interface/api/main.py — full lifespan wiring (worker, scheduler, doc watcher, TTS)
+- [x] requirements.txt — added watchdog + pymupdf
 
-### Phase 4 📋 Planned
-- [ ] services/document_agent/ (watchdog + PyMuPDF)
-- [ ] interface/desktop/ (rumps menubar)
-- [ ] interface/api/templates/index.html (web UI)
-- [ ] .env.example
+### Phase 3 bug fixes (same commit)
+- [x] context_loader returns {thought_id, text, score} dicts → relationships now extracted
+- [x] /voice/start writes session row, /voice/stop increments thought_count + end_time
+- [x] VoiceService lazy-loads VAD + Whisper on first start_recording() (was eager in __init__)
+
+### Phase 4 🔨 Next Up
+- [ ] Schema migration: task lifecycle columns (milestone_parent_id, percentage_complete,
+      time_estimate_hours, next_step, closure_note); task_closures + weekly_records tables
+- [ ] services/agent/routines/milestone.py — task breakdown via conversation
+- [ ] interface/api/templates/index.html — minimal web UI (timeline + tasks + chat)
+- [ ] interface/desktop/ — rumps menubar app (record button, status, quick chat)
+- [ ] macOS notifications — osascript silent + afplay escalating alarm
+- [ ] .env.example template
+- [ ] Persist scheduler last_checkin to DB (currently in-memory, resets on restart)
+- [ ] Schema migration runner (Alembic-style or simple version table)
 
 ### Phase 5+ 🔭 Future Vision
 - Android (Nothing 2a): same backend, new interface layer
