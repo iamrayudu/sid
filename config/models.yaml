@@ -1,0 +1,26 @@
+# SID Model Configuration
+# Change model names here to swap models — no code changes needed
+
+llm:
+  fast_model: qwen2.5:3b       # Stage 1 classification (~2-3s)
+  deep_model: qwen2.5:14b      # Stage 2 extraction (~10-15s)
+  ollama_base_url: http://localhost:11434
+
+embeddings:
+  model: all-MiniLM-L6-v2      # 384-dim, 24MB, fast on CPU
+  quantize: true                # int8 quantization for speed
+
+# Cost tracking (local = $0, but we track usage for capacity planning)
+# These can be set to real costs if you add a cloud fallback later
+cost_per_1k_tokens:
+  qwen2.5:3b: 0.0
+  qwen2.5:14b: 0.0
+  default: 0.0
+
+# Whisper model options (trade speed vs accuracy):
+# tiny.en  — 39MB, fastest, less accurate
+# base.en  — 74MB, good balance (RECOMMENDED)
+# small.en — 244MB, more accurate, slower
+# medium.en — 769MB, most accurate, slow
+whisper:
+  model: base.en
