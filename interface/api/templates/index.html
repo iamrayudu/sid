@@ -14,6 +14,7 @@
     --accent: #7aa2ff;
     --danger: #ff6b6b;
     --ok: #5ad19a;
+    --warn: #f4b942;
   }
   * { box-sizing: border-box; }
   body {
@@ -33,7 +34,7 @@
   .dot.idle { background: var(--ok); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-  main { flex: 1; max-width: 820px; width: 100%; margin: 0 auto; padding: 24px; }
+  main { flex: 1; max-width: 860px; width: 100%; margin: 0 auto; padding: 24px; }
   .row { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; }
 
   button.record {
@@ -51,7 +52,7 @@
   button.record:hover { background: #92b4ff; }
   button.record.recording { background: var(--danger); color: #fff; }
 
-  input[type=search] {
+  input[type=search], input[type=text] {
     flex: 1;
     padding: 12px 14px;
     background: var(--panel);
@@ -61,10 +62,11 @@
     font-size: 14px;
     outline: none;
   }
-  input[type=search]:focus { border-color: var(--accent); }
+  input[type=search]:focus, input[type=text]:focus { border-color: var(--accent); }
 
   section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-  section h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); font-weight: 600; }
+  section h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); font-weight: 600; display: flex; align-items: center; justify-content: space-between; }
+  section h2 .badge { background: var(--border); border-radius: 20px; padding: 1px 8px; font-size: 11px; color: var(--muted); font-weight: 500; }
 
   .thought, .result {
     padding: 10px 12px;
@@ -74,6 +76,66 @@
   .thought:last-child, .result:last-child { border-bottom: 0; }
   .thought .meta, .result .meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
   .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+
+  /* Tasks */
+  .task {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .task:last-child { border-bottom: 0; }
+  .task input[type=checkbox] {
+    margin-top: 2px;
+    accent-color: var(--ok);
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+  .task .task-content { flex: 1; }
+  .task .task-meta { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .task.done .task-content { opacity: 0.45; text-decoration: line-through; }
+  .priority-1 { border-left: 3px solid var(--danger); padding-left: 9px; }
+  .priority-2 { border-left: 3px solid var(--warn); padding-left: 9px; }
+  .priority-3 { border-left: 3px solid var(--border); padding-left: 9px; }
+
+  /* Chat */
+  #chatHistory {
+    max-height: 320px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .msg {
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    max-width: 90%;
+    white-space: pre-wrap;
+  }
+  .msg.user { background: #1f2433; color: var(--text); align-self: flex-end; }
+  .msg.agent { background: #1a2a1e; color: #c5e8d0; align-self: flex-start; border: 1px solid #2a3d30; }
+  .msg.thinking { color: var(--muted); font-style: italic; font-size: 12px; background: transparent; border: 1px dashed var(--border); }
+  .chat-input-row { display: flex; gap: 8px; }
+  .chat-input-row input { flex: 1; padding: 10px 12px; }
+  .chat-input-row button {
+    padding: 10px 18px;
+    background: var(--accent);
+    color: #0e0f12;
+    border: 0;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .chat-input-row button:hover { background: #92b4ff; }
+  .chat-input-row button:disabled { opacity: 0.4; cursor: not-allowed; }
 
   footer { padding: 12px 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; text-align: center; }
 </style>
@@ -102,14 +164,29 @@
     <h2>Recent thoughts</h2>
     <div id="timeline"><div class="empty">No thoughts yet today.</div></div>
   </section>
+
+  <section>
+    <h2>Pending tasks <span id="taskBadge" class="badge">0</span></h2>
+    <div id="taskList"><div class="empty">No pending tasks.</div></div>
+  </section>
+
+  <section>
+    <h2>Chat with SID</h2>
+    <div id="chatHistory"></div>
+    <div class="chat-input-row">
+      <input id="chatInput" type="text" placeholder="Ask SID anything about your thoughts..." />
+      <button id="sendBtn">Send</button>
+    </div>
+  </section>
 </main>
 
-<footer id="statsFooter">Today: — thoughts | LLM calls: —</footer>
+<footer id="statsFooter">Today: — thoughts | Pending: — tasks | LLM calls: —</footer>
 
 <script>
 const API = "";
 let sessionId = null;
 let recording = false;
+let chatHistory = [];
 
 const recBtn = document.getElementById("recBtn");
 const dot = document.getElementById("dot");
@@ -119,6 +196,11 @@ const statsFooter = document.getElementById("statsFooter");
 const searchBox = document.getElementById("searchBox");
 const searchSection = document.getElementById("searchSection");
 const searchResults = document.getElementById("searchResults");
+const taskList = document.getElementById("taskList");
+const taskBadge = document.getElementById("taskBadge");
+const chatHistoryEl = document.getElementById("chatHistory");
+const chatInput = document.getElementById("chatInput");
+const sendBtn = document.getElementById("sendBtn");
 
 async function api(path, opts={}) {
   const res = await fetch(API + path, {
@@ -155,7 +237,7 @@ async function stopRecording() {
     sessionId = null;
     recBtn.textContent = "Hold to record";
     recBtn.classList.remove("recording");
-    if (r) loadTimeline();
+    if (r) { loadTimeline(); loadTasks(); }
   } catch (e) {
     recording = false; sessionId = null;
     recBtn.textContent = "Hold to record";
@@ -179,10 +261,52 @@ async function loadTimeline() {
     timelineEl.innerHTML = recent.map(t => `
       <div class="thought">
         <div>${escapeHtml(t.summary || t.clean_text || t.raw_text || "")}</div>
-        <div class="meta">${t.type || "raw"} · ${t.timestamp || ""}</div>
+        <div class="meta">${t.type || "raw"} · ${fmtTime(t.created_at)}</div>
       </div>
     `).join("");
   } catch {}
+}
+
+async function loadTasks() {
+  try {
+    const r = await api("/api/agent/tasks");
+    const tasks = r.tasks || [];
+    taskBadge.textContent = tasks.filter(t => t.status === "pending").length;
+
+    if (tasks.length === 0) {
+      taskList.innerHTML = '<div class="empty">No pending tasks.</div>';
+      return;
+    }
+
+    taskList.innerHTML = tasks.map(t => {
+      const pClass = t.priority <= 2 ? `priority-${t.priority}` : "priority-3";
+      const isDone = t.status === "done";
+      return `
+        <div class="task ${isDone ? "done" : ""} ${pClass}" data-id="${escapeAttr(t.id)}" data-thought="${escapeAttr(t.thought_id)}">
+          <input type="checkbox" ${isDone ? "checked" : ""} onchange="toggleTask(this, '${escapeAttr(t.thought_id)}', '${escapeAttr(t.id)}')" />
+          <div class="task-content">
+            <div>${escapeHtml(t.content)}</div>
+            <div class="task-meta">priority ${t.priority}${t.due_date ? " · due " + escapeHtml(t.due_date) : ""}</div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  } catch {}
+}
+
+async function toggleTask(checkbox, thoughtId, extractionId) {
+  const newStatus = checkbox.checked ? "done" : "pending";
+  try {
+    await api(`/api/thoughts/${thoughtId}/extraction/${extractionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: newStatus }),
+    });
+    await loadTasks();
+    await loadStats();
+  } catch (e) {
+    checkbox.checked = !checkbox.checked;
+    alert("Failed to update task: " + e.message);
+  }
 }
 
 async function pollStatus() {
@@ -196,7 +320,7 @@ async function pollStatus() {
 async function loadStats() {
   try {
     const s = await api("/api/stats");
-    statsFooter.textContent = `Today: ${s.thoughts_today} thoughts | LLM calls: ${s.llm_calls_today}`;
+    statsFooter.textContent = `Today: ${s.thoughts_today} thoughts | Pending: ${s.pending_tasks} tasks | LLM calls: ${s.llm_calls_today}`;
   } catch {}
 }
 
@@ -216,7 +340,7 @@ searchBox.addEventListener("input", () => {
       searchResults.innerHTML = r.results.map(s => `
         <div class="result">
           <div>${escapeHtml(s.summary || s.text || "")}</div>
-          <div class="meta">${(s.type || "")} · ${s.date || ""} · score ${(s.score || 0).toFixed(2)}</div>
+          <div class="meta">${(s.type || "")} · ${fmtDate(s.date)} · score ${(s.score || 0).toFixed(2)}</div>
         </div>
       `).join("");
     } catch (e) {
@@ -226,18 +350,82 @@ searchBox.addEventListener("input", () => {
   }, 250);
 });
 
+// ── Chat ─────────────────────────────────────────────────────────────────────
+
+function appendMsg(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  chatHistoryEl.appendChild(div);
+  chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
+  return div;
+}
+
+async function sendChat() {
+  const msg = chatInput.value.trim();
+  if (!msg) return;
+  chatInput.value = "";
+  sendBtn.disabled = true;
+
+  appendMsg("user", msg);
+  const thinking = appendMsg("thinking", "SID is thinking…");
+
+  try {
+    const r = await api("/api/agent/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: msg, history: chatHistory }),
+    });
+    thinking.remove();
+    const reply = r.response || "(no response)";
+    appendMsg("agent", reply);
+    chatHistory.push({ role: "user", content: msg });
+    chatHistory.push({ role: "assistant", content: reply });
+    // Keep last 20 turns to avoid huge payloads
+    if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);
+  } catch (e) {
+    thinking.textContent = "Error: " + e.message;
+    thinking.className = "msg thinking";
+  } finally {
+    sendBtn.disabled = false;
+    chatInput.focus();
+  }
+}
+
+sendBtn.addEventListener("click", sendChat);
+chatInput.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({
     "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
   })[c]);
 }
 
+function escapeAttr(s) {
+  return String(s).replace(/'/g, "\\'");
+}
+
+function fmtTime(iso) {
+  if (!iso || iso.length < 16) return iso || "";
+  return iso.substring(11, 16);
+}
+
+function fmtDate(iso) {
+  if (!iso || iso.length < 10) return iso || "";
+  return iso.substring(0, 10);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
 loadTimeline();
+loadTasks();
 loadStats();
 pollStatus();
 setInterval(pollStatus, 2000);
 setInterval(loadStats, 30000);
 setInterval(loadTimeline, 15000);
+setInterval(loadTasks, 30000);
 </script>
 </body>
 </html>

@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import datetime
+import time
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -39,6 +40,13 @@ class AgentStatus(BaseModel):
 
 class BriefResponse(BaseModel):
     text: str
+
+
+class RecapResponse(BaseModel):
+    hours: int
+    thought_count: int
+    summary: str
+    took_ms: int
 
 
 class CritiqueResponse(BaseModel):
@@ -120,6 +128,68 @@ async def critique() -> CritiqueResponse:
         return CritiqueResponse(report=report)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tasks")
+async def get_tasks():
+    from services.memory import get_store
+    try:
+        tasks = await get_store().get_pending_tasks()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "tasks": [
+            {
+                "id": t.id,
+                "thought_id": t.thought_id,
+                "content": t.content,
+                "priority": t.priority,
+                "status": t.status,
+                "due_date": t.due_date,
+            }
+            for t in tasks
+        ]
+    }
+
+
+@router.get("/recap", response_model=RecapResponse)
+async def recap(hours: int = Query(default=24, ge=1, le=168)) -> RecapResponse:
+    from services.memory import get_store
+    from services.llm_gateway import get_gateway
+    ts = time.perf_counter()
+
+    thoughts = await get_store().get_recent_thoughts(hours)
+    if not thoughts:
+        return RecapResponse(
+            hours=hours,
+            thought_count=0,
+            summary="No thoughts captured in this period.",
+            took_ms=0,
+        )
+
+    lines = "\n".join(
+        f"- [{t.type or 'raw'}] {t.summary or t.clean_text or t.raw_text[:120]}"
+        for t in thoughts
+    )
+    prompt = (
+        f"Summarize these {len(thoughts)} thoughts captured in the last {hours} hours.\n\n"
+        f"{lines}\n\n"
+        "Write a brief, direct recap (3-5 sentences). "
+        "Focus on themes, what's moving, and what's stuck. No fluff."
+    )
+    try:
+        summary = await get_gateway().chat_for(
+            "agent_chat", [{"role": "user", "content": prompt}]
+        )
+    except Exception as e:
+        summary = f"Summary unavailable: {e}"
+
+    return RecapResponse(
+        hours=hours,
+        thought_count=len(thoughts),
+        summary=summary,
+        took_ms=int((time.perf_counter() - ts) * 1000),
+    )
 
 
 @router.get("/daily")

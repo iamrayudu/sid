@@ -440,6 +440,27 @@ class MemoryStore:
             rows = await cursor.fetchall()
             return [Thought(**dict(r)) for r in rows]
 
+    async def get_recent_thoughts(self, hours: int = 24) -> List[Thought]:
+        cutoff = (
+            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours)
+        ).isoformat()
+        async with self.db_manager.get_connection() as db:
+            cursor = await db.execute(
+                "SELECT * FROM thoughts WHERE created_at >= ? ORDER BY created_at ASC",
+                (cutoff,),
+            )
+            rows = await cursor.fetchall()
+            return [Thought(**dict(r)) for r in rows]
+
+    async def get_extractions_for_thought(self, thought_id: str) -> List[Extraction]:
+        async with self.db_manager.get_connection() as db:
+            cursor = await db.execute(
+                "SELECT * FROM extractions WHERE thought_id = ? ORDER BY priority ASC",
+                (thought_id,),
+            )
+            rows = await cursor.fetchall()
+            return [Extraction(**dict(r)) for r in rows]
+
     def _get_settings(self):
         from config.settings import get_settings
         return get_settings()
