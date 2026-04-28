@@ -257,6 +257,82 @@ async def list_milestones(parent_id: str):
     }
 
 
+class ClosureRequest(BaseModel):
+    extraction_id: str
+    learning: Optional[str] = ""
+    what_went_wrong: Optional[str] = ""
+    would_do_differently: Optional[str] = ""
+    negligence_flagged: bool = False
+    energy_reflection: Optional[str] = ""
+
+
+class ClosureResponse(BaseModel):
+    closure: dict
+    extraction_status: str
+
+
+@router.post("/closure", response_model=ClosureResponse)
+async def create_closure(body: ClosureRequest) -> ClosureResponse:
+    """Capture the learning signal when a task moves to 'done'.
+
+    Writes a task_closures row, flips extractions.status to 'done',
+    sets completed_at and closure_note (first sentence of `learning`).
+    Refuses if a closure already exists for this extraction.
+    """
+    import uuid
+    import datetime as _dt
+    from shared.schemas.models import TaskClosure
+    from services.memory import get_store
+    store = get_store()
+
+    parent = await store.get_extraction(body.extraction_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail=f"Extraction {body.extraction_id} not found")
+
+    existing = await store.get_closure_for(body.extraction_id)
+    if existing is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Closure already exists for this task",
+        )
+
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    closure = TaskClosure(
+        id=str(uuid.uuid4()),
+        extraction_id=body.extraction_id,
+        learning=body.learning or "",
+        what_went_wrong=body.what_went_wrong or "",
+        would_do_differently=body.would_do_differently or "",
+        negligence_flagged=1 if body.negligence_flagged else 0,
+        energy_reflection=body.energy_reflection or "",
+        created_at=now,
+    )
+    await store.save_task_closure(closure)
+
+    # Short closure_note for the extraction itself = first sentence of learning
+    note = (body.learning or "").strip().split(".")[0][:200]
+
+    updates = {"status": "done"}
+    if note:
+        updates["closure_note"] = note
+    # update_extraction auto-sets completed_at when status flips to done
+    await store.update_extraction(body.extraction_id, updates)
+
+    return ClosureResponse(
+        closure=closure.model_dump(),
+        extraction_status="done",
+    )
+
+
+@router.get("/closure")
+async def get_closure(extraction_id: str):
+    from services.memory import get_store
+    closure = await get_store().get_closure_for(extraction_id)
+    if closure is None:
+        raise HTTPException(status_code=404, detail="No closure for this extraction")
+    return closure.model_dump()
+
+
 @router.get("/recap")
 async def recap(hours: int = 4):
     """LLM summary of the last N hours of thoughts."""

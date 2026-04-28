@@ -391,6 +391,37 @@
   </div>
 </main>
 
+<!-- CLOSURE MODAL (B2) -->
+<div class="modal-backdrop" id="closureModal">
+  <div class="modal" role="dialog" aria-labelledby="closureTitle">
+    <h3 id="closureTitle">Close task — capture the learning</h3>
+    <div class="parent-task" id="closureParent">—</div>
+
+    <label for="closureLearning">What did you learn? <span style="color:var(--muted);text-transform:none;">(required)</span></label>
+    <textarea id="closureLearning" placeholder="The single most useful thing you'd tell yourself before starting this again."></textarea>
+
+    <label for="closureWrong" style="margin-top:10px;">What went wrong (if anything)?</label>
+    <textarea id="closureWrong" placeholder="What you'd flag as a misstep — leave blank if nothing."></textarea>
+
+    <label for="closureDifferent" style="margin-top:10px;">What would you do differently?</label>
+    <textarea id="closureDifferent" placeholder="The concrete thing you'd change about your approach."></textarea>
+
+    <label for="closureEnergy" style="margin-top:10px;">Energy / mood reflection (optional)</label>
+    <textarea id="closureEnergy" placeholder="Was this energizing or draining? Why?"></textarea>
+
+    <label style="margin-top:12px;display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;color:var(--text);letter-spacing:normal;">
+      <input type="checkbox" id="closureNegligence" style="margin:0;" />
+      Flag as negligence (procrastinated / avoided / dropped without good reason)
+    </label>
+
+    <div class="actions">
+      <button id="closureCancel">Cancel</button>
+      <button id="closureSubmit" class="primary">Close task</button>
+    </div>
+    <div class="breakdown" id="closureResult"></div>
+  </div>
+</div>
+
 <!-- PLAN MODAL -->
 <div class="modal-backdrop" id="planModal">
   <div class="modal" role="dialog" aria-labelledby="planTitle">
@@ -523,20 +554,14 @@ async function loadTasks() {
   }
 }
 
-async function markDone(extractionId, thoughtId) {
-  try {
-    await api(`/api/thoughts/${thoughtId}/extraction/${extractionId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: "done" }),
-    });
-    const el = document.getElementById("task-" + extractionId);
-    if (el) {
-      el.style.opacity = "0.4";
-      setTimeout(() => { el.remove(); loadTasks(); }, 600);
-    }
-  } catch (e) {
-    alert("Could not mark done: " + e.message);
-  }
+// Marking a task done opens the closure modal. The modal captures the
+// learning signal (B2). Cancel reverts the checkbox; submit posts to
+// /api/agent/closure which writes task_closures + flips extractions.status.
+function markDone(extractionId, thoughtId) {
+  const el = document.getElementById("task-" + extractionId);
+  const cb = el ? el.querySelector('input[type=checkbox]') : null;
+  const content = el ? el.querySelector('.task-content span').textContent : "";
+  openClosureModal(extractionId, thoughtId, content, cb);
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
@@ -741,6 +766,89 @@ async function dropFailed(id) {
     loadFailed();
   } catch (e) { alert("Drop failed: " + e.message); }
 }
+
+// ── Closure modal (B2: task closure flow) ────────────────────────────────────
+const closureModal      = document.getElementById("closureModal");
+const closureParent     = document.getElementById("closureParent");
+const closureLearning   = document.getElementById("closureLearning");
+const closureWrong      = document.getElementById("closureWrong");
+const closureDifferent  = document.getElementById("closureDifferent");
+const closureEnergy     = document.getElementById("closureEnergy");
+const closureNegligence = document.getElementById("closureNegligence");
+const closureSubmit     = document.getElementById("closureSubmit");
+const closureCancel     = document.getElementById("closureCancel");
+const closureResult     = document.getElementById("closureResult");
+
+let closureCtx = null;  // { extractionId, thoughtId, checkbox }
+
+function openClosureModal(extractionId, thoughtId, content, checkbox) {
+  closureCtx = { extractionId, thoughtId, checkbox };
+  closureParent.textContent = content;
+  closureLearning.value = "";
+  closureWrong.value = "";
+  closureDifferent.value = "";
+  closureEnergy.value = "";
+  closureNegligence.checked = false;
+  closureResult.innerHTML = "";
+  closureSubmit.disabled = false;
+  closureSubmit.textContent = "Close task";
+  closureModal.classList.add("show");
+  setTimeout(() => closureLearning.focus(), 50);
+}
+
+function closeClosureModal({ revert = false } = {}) {
+  // If user cancels, revert the checkbox so the task isn't visually struck.
+  if (revert && closureCtx && closureCtx.checkbox) {
+    closureCtx.checkbox.checked = false;
+  }
+  closureModal.classList.remove("show");
+  closureCtx = null;
+}
+
+closureCancel.addEventListener("click", () => closeClosureModal({ revert: true }));
+closureModal.addEventListener("click", e => {
+  if (e.target === closureModal) closeClosureModal({ revert: true });
+});
+
+closureSubmit.addEventListener("click", async () => {
+  if (!closureCtx) return;
+  const learning = closureLearning.value.trim();
+  if (!learning) {
+    closureResult.innerHTML = '<div style="color:var(--danger);font-size:12px;padding:6px 0;">Learning is required — that is the entire point of the closure.</div>';
+    closureLearning.focus();
+    return;
+  }
+
+  closureSubmit.disabled = true;
+  closureSubmit.textContent = "Saving…";
+  closureResult.innerHTML = "";
+
+  try {
+    await api("/api/agent/closure", {
+      method: "POST",
+      body: JSON.stringify({
+        extraction_id:        closureCtx.extractionId,
+        learning,
+        what_went_wrong:      closureWrong.value.trim(),
+        would_do_differently: closureDifferent.value.trim(),
+        energy_reflection:    closureEnergy.value.trim(),
+        negligence_flagged:   closureNegligence.checked,
+      }),
+    });
+    // Visual: fade the task row, then refresh.
+    const el = document.getElementById("task-" + closureCtx.extractionId);
+    if (el) {
+      el.style.opacity = "0.4";
+      setTimeout(() => { el.remove(); loadTasks(); }, 500);
+    }
+    closureSubmit.textContent = "Saved";
+    setTimeout(() => closeClosureModal(), 600);
+  } catch (e) {
+    closureResult.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:6px 0;">${escapeHtml(e.message)}</div>`;
+    closureSubmit.disabled = false;
+    closureSubmit.textContent = "Retry";
+  }
+});
 
 // ── Plan modal (B1: milestone routine) ───────────────────────────────────────
 const planModal   = document.getElementById("planModal");

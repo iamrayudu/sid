@@ -397,6 +397,18 @@ class MemoryStore:
             rows = await cursor.fetchall()
             return [Thought(**dict(r)) for r in rows]
 
+    async def get_closure_for(self, extraction_id: str) -> Optional[TaskClosure]:
+        """Return the closure record for an extraction, if one exists."""
+        async with self.db_manager.get_connection() as db:
+            cursor = await db.execute(
+                "SELECT * FROM task_closures WHERE extraction_id = ? LIMIT 1",
+                (extraction_id,),
+            )
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            return TaskClosure(**dict(row))
+
     async def save_task_closure(self, closure: TaskClosure) -> str:
         async with self.db_manager.get_connection() as db:
             await db.execute(
