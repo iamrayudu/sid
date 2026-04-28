@@ -24,6 +24,11 @@ class ChatResponse(BaseModel):
     response: str
     tools_used: List[str]
     took_ms: int
+    # B3 — interrogation enforcement
+    question_count: int = 0
+    mode: str = "answering"          # "interrogating" | "answering"
+    min_questions: int = 0
+    bypassed: bool = False
 
 
 class SuppressRequest(BaseModel):
@@ -65,6 +70,10 @@ async def chat(body: ChatRequest) -> ChatResponse:
             response=result["response"],
             tools_used=result["tools_used"],
             took_ms=result["took_ms"],
+            question_count=result.get("question_count", 0),
+            mode=result.get("mode", "answering"),
+            min_questions=result.get("min_questions", 0),
+            bypassed=result.get("bypassed", False),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

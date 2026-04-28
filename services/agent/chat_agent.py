@@ -226,6 +226,57 @@ _TOOL_SCHEMAS = [
 ]
 
 
+# ── Interrogation enforcement (B3) ────────────────────────────────────────────
+#
+# Sudheer asked SID to interrogate before answering. The system prompt says it,
+# but prompts alone don't hold the line. Enforcement here is stateless and
+# history-driven: we count question-shaped assistant messages in the existing
+# conversation, and if the latest user turn deserves interrogation but the
+# model just produced an answer, we re-prompt to force one more question.
+
+_BYPASS_PHRASES = ("just answer", "skip questions", "skip the questions", "no questions")
+_SPECIFIC_TRIGGERS = (
+    "what tasks", "pending", "today", "yesterday", "this week",
+    "list ", "show me", "search for", "find ", "get ",
+    "extraction_id", "thought_id",
+)
+
+
+def _is_question(text: Optional[str]) -> bool:
+    """Heuristic: does this look like a clarifying question rather than an answer?"""
+    if not text:
+        return False
+    t = text.strip()
+    if not t:
+        return False
+    if t.endswith("?"):
+        return True
+    # numbered-list of clarifications; short enough to plausibly be questions
+    return "?" in t and len(t.split()) < 80
+
+
+def _count_assistant_questions(history: List[Dict[str, str]]) -> int:
+    return sum(
+        1 for m in history
+        if m.get("role") == "assistant" and _is_question(m.get("content"))
+    )
+
+
+def _looks_specific(message: str) -> bool:
+    """Specific factual asks (e.g. 'what tasks are pending') skip interrogation."""
+    m = message.lower().strip()
+    if not m:
+        return True
+    if any(t in m for t in _SPECIFIC_TRIGGERS):
+        return True
+    # Very short asks are almost always specific lookups
+    return len(m.split()) < 5
+
+
+def _should_bypass(message: str) -> bool:
+    return any(p in message.lower() for p in _BYPASS_PHRASES)
+
+
 # ── ReAct loop ─────────────────────────────────────────────────────────────────
 
 async def chat(
@@ -234,10 +285,26 @@ async def chat(
     max_tool_rounds: int = 6,
 ) -> Dict[str, Any]:
     """
-    Process a chat message. Returns {response, tools_used, took_ms}.
-    Handles tool calls in a ReAct loop (think → act → observe → repeat).
+    Process a chat message. Returns {response, tools_used, took_ms,
+    question_count, mode}.
+
+    Interrogation enforcement (B3):
+    - Counts question-shaped assistant messages already in `history`.
+    - If the latest user message is broad/ambiguous AND the count is below
+      `interrogation_min_questions`, the agent is forced to keep asking
+      questions until threshold is met (or the user types a bypass phrase
+      like "just answer").
+    - Hard cap at `interrogation_max_questions` — gate opens regardless.
+
+    Mode in the response is "interrogating" while gated, "answering" once
+    the agent is allowed to deliver a conclusion.
     """
     import time
+    from config.settings import get_settings
+    settings = get_settings()
+    min_q = settings.interrogation_min_questions
+    max_q = settings.interrogation_max_questions
+
     start = time.perf_counter()
     tools_used: List[str] = []
 
@@ -245,10 +312,40 @@ async def chat(
     # config_for() honours per-purpose route overrides (e.g. agent_chat → anthropic).
     model, _provider, client = gateway.config_for("agent_chat")
 
+    history = history or []
+    prior_q = _count_assistant_questions(history)
+    bypass = _should_bypass(message) or _looks_specific(message)
+    # Interrogation is "active" only if min_q > 0, we haven't bypassed, and
+    # we're below both the minimum (forcing more questions) and the maximum
+    # (gate opens hard at max regardless).
+    interrogating = (
+        min_q > 0
+        and not bypass
+        and prior_q < min_q
+        and prior_q < max_q
+    )
+
     messages: List[Dict[str, str]] = [{"role": "system", "content": _SYSTEM}]
-    if history:
-        messages.extend(history[-20:])  # keep last 20 turns for context
+    if interrogating:
+        messages.append({
+            "role": "system",
+            "content": (
+                f"INTERROGATION GATE ACTIVE. You have asked {prior_q} clarifying "
+                f"questions in this conversation. Sudheer requires at least {min_q} "
+                "before any conclusive answer. Ask exactly ONE focused, specific "
+                "clarifying question now. Do NOT call tools. Do NOT answer yet. "
+                "End your message with a single question mark."
+            ),
+        })
+    messages.extend(history[-20:])  # keep last 20 turns for context
     messages.append({"role": "user", "content": message})
+
+    # When forced into interrogation, suppress tools — we want a question, not
+    # a tool call that defeats the gate.
+    use_tools = not interrogating
+
+    forced_retries = 0
+    MAX_FORCED_RETRIES = 3
 
     # ReAct loop
     for _ in range(max_tool_rounds):
@@ -256,12 +353,11 @@ async def chat(
         response = None
         success = True
         try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=_TOOL_SCHEMAS,
-                tool_choice="auto",
-            )
+            kwargs = {"model": model, "messages": messages}
+            if use_tools:
+                kwargs["tools"] = _TOOL_SCHEMAS
+                kwargs["tool_choice"] = "auto"
+            response = await client.chat.completions.create(**kwargs)
         except Exception:
             success = False
             raise
@@ -273,15 +369,42 @@ async def chat(
 
         msg = response.choices[0].message
 
-        # No tool calls — final answer
+        # No tool calls — final answer (or a question, if interrogating)
         if not msg.tool_calls:
             final_text = msg.content or ""
+
+            # Enforcement: under interrogation, model must produce a question.
+            # If it produced an answer instead, forcefully re-prompt up to
+            # MAX_FORCED_RETRIES times. After that, accept whatever it said.
+            if interrogating and not _is_question(final_text) and forced_retries < MAX_FORCED_RETRIES:
+                forced_retries += 1
+                logger.info("Interrogation re-prompt %d/%d", forced_retries, MAX_FORCED_RETRIES)
+                messages.append({"role": "assistant", "content": final_text})
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "That was an answer, not a question. The interrogation gate "
+                        "is still active. Ask ONE specific clarifying question. "
+                        "End with a question mark. Do not answer yet."
+                    ),
+                })
+                continue  # next loop iteration — call again
+
             took_ms = int((time.perf_counter() - start) * 1000)
-            logger.info("Chat completed in %dms, tools: %s", took_ms, tools_used)
+            new_q_count = prior_q + (1 if _is_question(final_text) else 0)
+            mode = "interrogating" if (interrogating and _is_question(final_text)) else "answering"
+            logger.info(
+                "Chat completed in %dms, tools=%s, mode=%s, q_count=%d/%d",
+                took_ms, tools_used, mode, new_q_count, min_q,
+            )
             return {
                 "response": final_text,
                 "tools_used": tools_used,
                 "took_ms": took_ms,
+                "question_count": new_q_count,
+                "mode": mode,
+                "min_questions": min_q,
+                "bypassed": bypass,
             }
 
         # Execute all tool calls in this round
@@ -321,4 +444,8 @@ async def chat(
         "response": "I hit the reasoning limit. Try a more specific question.",
         "tools_used": tools_used,
         "took_ms": took_ms,
+        "question_count": prior_q,
+        "mode": "interrogating" if interrogating else "answering",
+        "min_questions": min_q,
+        "bypassed": bypass,
     }

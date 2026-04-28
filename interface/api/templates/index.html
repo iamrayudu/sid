@@ -359,7 +359,10 @@
 
     <!-- CHAT -->
     <div class="panel">
-      <h2>Chat with SID</h2>
+      <h2 style="display:flex;align-items:center;justify-content:space-between;">
+        <span>Chat with SID</span>
+        <span id="chatModePill" class="health-pill" style="display:none;"></span>
+      </h2>
       <div id="chatMessages"></div>
       <div class="chat-row">
         <textarea id="chatInput" rows="2" placeholder="Ask SID anything..."></textarea>
@@ -574,6 +577,29 @@ function appendMsg(role, text) {
   return div;
 }
 
+const chatModePill = document.getElementById("chatModePill");
+
+function renderChatMode(r) {
+  // r is the chat response payload
+  if (!r || !r.min_questions) {
+    chatModePill.style.display = "none";
+    return;
+  }
+  if (r.bypassed) {
+    chatModePill.style.display = "none";
+    return;
+  }
+  if (r.mode === "interrogating") {
+    chatModePill.textContent = `Interrogating ${r.question_count}/${r.min_questions}`;
+    chatModePill.className = "health-pill warn";
+    chatModePill.style.display = "";
+  } else {
+    chatModePill.textContent = "Answering";
+    chatModePill.className = "health-pill ok";
+    chatModePill.style.display = "";
+  }
+}
+
 async function sendChat() {
   const msg = chatInput.value.trim();
   if (!msg) return;
@@ -590,6 +616,7 @@ async function sendChat() {
     });
     thinking.remove();
     appendMsg("sid", r.response || "");
+    renderChatMode(r);
     chatHistory.push({ role: "user", content: msg });
     chatHistory.push({ role: "assistant", content: r.response || "" });
     if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);

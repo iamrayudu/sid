@@ -26,6 +26,19 @@ class Settings(BaseSettings):
     checkin_threshold: int = Field(default=1, alias="SID_CHECKIN_THRESHOLD")
     checkin_interval_hours: int = Field(default=4, alias="SID_CHECKIN_INTERVAL_HOURS")
 
+    # Chat agent — interrogation discipline (B3)
+    interrogation_min_questions: int = Field(
+        default=5, alias="SID_INTERROGATION_MIN_QUESTIONS",
+        description=(
+            "Chat agent must ask at least N clarifying questions before "
+            "delivering a conclusive answer. Set to 0 to disable enforcement."
+        ),
+    )
+    interrogation_max_questions: int = Field(
+        default=20, alias="SID_INTERROGATION_MAX_QUESTIONS",
+        description="Hard cap on questions before the agent must answer."
+    )
+
     # Pipeline
     stage1_confidence_threshold: float = Field(
         default=0.4, alias="SID_STAGE1_CONFIDENCE_THRESHOLD",
@@ -64,8 +77,8 @@ class Settings(BaseSettings):
         self.vector_path.mkdir(parents=True, exist_ok=True)
 
 
-_settings: Settings | None = None
-
+from typing import Optional
+_settings: Optional[Settings] = None
 
 def get_settings() -> Settings:
     global _settings
