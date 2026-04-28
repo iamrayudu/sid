@@ -180,8 +180,7 @@ async def chat(
     tools_used: List[str] = []
 
     gateway = get_gateway()
-    client = gateway.client
-    model = gateway.model_for("agent_chat")
+    model, _provider, client = gateway.config_for("agent_chat")
 
     messages: List[Dict[str, str]] = [{"role": "system", "content": _SYSTEM}]
     if history:
