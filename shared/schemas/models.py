@@ -91,6 +91,12 @@ class Extraction(BaseModel):
     due_date: Optional[str] = None
     completed_at: Optional[str] = None
     parent_id: Optional[str] = None
+    # Task lifecycle fields (added in schema migration)
+    milestone_parent_id: Optional[str] = None
+    percentage_complete: Optional[float] = 0.0
+    time_estimate_hours: Optional[float] = None
+    next_step: Optional[str] = None
+    closure_note: Optional[str] = None
 
 
 class Relationship(BaseModel):
@@ -134,6 +140,29 @@ class LLMCallRecord(BaseModel):
     latency_ms: int = 0
     estimated_cost_usd: float = 0.0
     success: int = 1
+
+
+class TaskClosure(BaseModel):
+    id: str
+    extraction_id: str
+    learning: Optional[str] = None
+    what_went_wrong: Optional[str] = None
+    would_do_differently: Optional[str] = None
+    negligence_flagged: int = 0
+    energy_reflection: Optional[str] = None
+    created_at: str
+
+
+class WeeklyRecord(BaseModel):
+    week_start: str
+    week_end: str
+    reflection: Optional[str] = None
+    planned_tasks: int = 0
+    completed_tasks: int = 0
+    completion_rate: Optional[float] = None
+    patterns: Optional[str] = None
+    key_learning: Optional[str] = None
+    created_at: str
 
 
 # ---------------------------------------------------------------------------

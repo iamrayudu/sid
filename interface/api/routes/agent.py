@@ -141,3 +141,68 @@ async def daily(date: Optional[str] = None):
             for t in thoughts
         ],
     }
+
+
+@router.get("/tasks")
+async def tasks():
+    """Return all pending extractions for the task panel."""
+    from services.memory import get_store
+    pending = await get_store().get_pending_tasks()
+    return {
+        "tasks": [
+            {
+                "id": t.id,
+                "thought_id": t.thought_id,
+                "content": t.content,
+                "priority": t.priority,
+                "status": t.status,
+                "due_date": t.due_date,
+                "milestone_parent_id": t.milestone_parent_id,
+                "percentage_complete": t.percentage_complete,
+                "next_step": t.next_step,
+            }
+            for t in pending
+        ]
+    }
+
+
+@router.get("/recap")
+async def recap(hours: int = 4):
+    """LLM summary of the last N hours of thoughts."""
+    from services.memory import get_store
+    from services.llm_gateway import get_gateway
+    store = get_store()
+    gateway = get_gateway()
+
+    since = (
+        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours)
+    ).isoformat()
+
+    # Fetch thoughts since cutoff (reuse timeline across recent days)
+    thoughts = []
+    for i in range(min(hours // 24 + 1, 2)):
+        d = (datetime.date.today() - datetime.timedelta(days=i)).isoformat()
+        day_thoughts = await store.get_timeline(d)
+        thoughts.extend([t for t in day_thoughts if t.created_at >= since])
+
+    if not thoughts:
+        return {"recap": "Nothing captured in the last {} hours.".format(hours), "thought_count": 0}
+
+    lines = []
+    for t in thoughts[-30:]:
+        ts = t.created_at[11:16] if len(t.created_at) >= 16 else ""
+        text = t.summary or t.raw_text[:120]
+        lines.append(f"[{ts}] [{t.type or '?'}] {text}")
+
+    prompt = (
+        f"Summarise the following {len(thoughts)} thoughts captured in the last {hours} hours. "
+        "Be concise (3-5 sentences). Highlight any urgent tasks or important ideas.\n\n"
+        + "\n".join(lines)
+    )
+
+    try:
+        summary = await gateway.chat_for("checkin", [{"role": "user", "content": prompt}])
+    except Exception as e:
+        summary = f"Recap unavailable: {e}"
+
+    return {"recap": summary, "thought_count": len(thoughts)}

@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import datetime
 import logging
+import uuid
 from typing import List
 
 from services.memory import get_store
 from services.llm_gateway import get_gateway
-from shared.schemas.models import Thought, Extraction
+from shared.schemas.models import Thought, Extraction, WeeklyRecord
 
 logger = logging.getLogger("sid.agent.weekly")
 
@@ -105,6 +106,20 @@ Rules:
     try:
         review = await gateway.chat_for("weekly", [{"role": "user", "content": prompt}])
         logger.info("Weekly review generated (%d thoughts across %d days)", total_count, len(thoughts_by_day))
+
+        stats = await store.get_weekly_stats(week_start, week_end)
+        rate = stats["rate"]
+        record = WeeklyRecord(
+            week_start=week_start,
+            week_end=week_end,
+            reflection=review,
+            planned_tasks=stats["planned"],
+            completed_tasks=stats["completed"],
+            completion_rate=rate,
+            created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
+        await store.save_weekly_record(record)
+
         return review
     except Exception as e:
         logger.error("Weekly review failed: %s", e)

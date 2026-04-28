@@ -5,7 +5,8 @@ import os
 from typing import List, Optional, Dict, Any
 
 from shared.schemas.models import (
-    RawChunk, Thought, Extraction, Relationship, SearchResult, LLMCallRecord, StatsResult
+    RawChunk, Thought, Extraction, Relationship, SearchResult, LLMCallRecord, StatsResult,
+    TaskClosure, WeeklyRecord,
 )
 from services.memory.db import get_db_manager
 from services.memory.vector_store import get_vector_store
@@ -366,6 +367,70 @@ class MemoryStore:
             )
             rows = await cursor.fetchall()
             return [Thought(**dict(r)) for r in rows]
+
+    async def save_task_closure(self, closure: TaskClosure) -> str:
+        async with self.db_manager.get_connection() as db:
+            await db.execute(
+                """
+                INSERT INTO task_closures (
+                    id, extraction_id, learning, what_went_wrong, would_do_differently,
+                    negligence_flagged, energy_reflection, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    closure.id, closure.extraction_id, closure.learning,
+                    closure.what_went_wrong, closure.would_do_differently,
+                    closure.negligence_flagged, closure.energy_reflection, closure.created_at,
+                ),
+            )
+            await db.commit()
+        return closure.id
+
+    async def save_weekly_record(self, record: WeeklyRecord) -> None:
+        async with self.db_manager.get_connection() as db:
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO weekly_records (
+                    week_start, week_end, reflection, planned_tasks, completed_tasks,
+                    completion_rate, patterns, key_learning, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.week_start, record.week_end, record.reflection,
+                    record.planned_tasks, record.completed_tasks, record.completion_rate,
+                    record.patterns, record.key_learning, record.created_at,
+                ),
+            )
+            await db.commit()
+
+    async def get_weekly_stats(self, week_start: str, week_end: str) -> dict:
+        """Count tasks created and completed within the given week range."""
+        async with self.db_manager.get_connection() as db:
+            cur = await db.execute(
+                """
+                SELECT COUNT(*) AS c FROM extractions
+                WHERE thought_id IN (
+                    SELECT id FROM thoughts WHERE DATE(created_at) BETWEEN ? AND ?
+                )
+                """,
+                (week_start, week_end),
+            )
+            row = await cur.fetchone()
+            planned = int(row["c"]) if row else 0
+
+            cur = await db.execute(
+                """
+                SELECT COUNT(*) AS c FROM extractions
+                WHERE status = 'done'
+                  AND DATE(completed_at) BETWEEN ? AND ?
+                """,
+                (week_start, week_end),
+            )
+            row = await cur.fetchone()
+            completed = int(row["c"]) if row else 0
+
+        rate = round(completed / planned, 2) if planned else 0.0
+        return {"planned": planned, "completed": completed, "rate": rate}
 
     def _get_settings(self):
         from config.settings import get_settings

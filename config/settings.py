@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     evening_hour: int = Field(default=21, alias="SID_EVENING_HOUR")
 
     # Agent
-    checkin_threshold: int = Field(default=3, alias="SID_CHECKIN_THRESHOLD")
-    checkin_interval_hours: int = Field(default=1, alias="SID_CHECKIN_INTERVAL_HOURS")
+    checkin_threshold: int = Field(default=1, alias="SID_CHECKIN_THRESHOLD")
+    checkin_interval_hours: int = Field(default=4, alias="SID_CHECKIN_INTERVAL_HOURS")
 
     # Voice
     whisper_model: str = Field(default="base.en", alias="SID_WHISPER_MODEL")

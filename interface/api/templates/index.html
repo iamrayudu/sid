@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>SID — Subjective Intelligence Daemon</title>
+<title>SID</title>
 <style>
   :root {
     --bg: #0e0f12;
@@ -14,6 +14,12 @@
     --accent: #7aa2ff;
     --danger: #ff6b6b;
     --ok: #5ad19a;
+    --warn: #f5a623;
+    --p1: #ff6b6b;
+    --p2: #f5a623;
+    --p3: #7aa2ff;
+    --p4: #8a8f99;
+    --p5: #5a5f6a;
   }
   * { box-sizing: border-box; }
   body {
@@ -25,35 +31,171 @@
     display: flex;
     flex-direction: column;
   }
-  header { padding: 18px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-  header h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.2px; }
-  header .status { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-  .dot.rec { background: var(--danger); animation: pulse 1s infinite; }
-  .dot.idle { background: var(--ok); }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-  main { flex: 1; max-width: 820px; width: 100%; margin: 0 auto; padding: 24px; }
-  .row { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; }
+  header {
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.2px; }
+  .hdr-right { display: flex; align-items: center; gap: 16px; }
+  .fsm-state { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .dot.rec   { background: var(--danger); animation: pulse 1s infinite; }
+  .dot.idle  { background: var(--ok); }
+  .dot.busy  { background: var(--warn); }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
 
-  button.record {
+  main {
     flex: 1;
-    padding: 18px 24px;
+    max-width: 1100px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 20px 24px;
+  }
+
+  /* --- RECORD BUTTON -------------------------------------------------------- */
+  #recBtn {
+    display: block;
+    width: 100%;
+    padding: 16px 24px;
     background: var(--accent);
     color: #0e0f12;
     border: 0;
     border-radius: 10px;
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
     transition: background 0.15s;
+    margin-bottom: 18px;
+    letter-spacing: 0.3px;
   }
-  button.record:hover { background: #92b4ff; }
-  button.record.recording { background: var(--danger); color: #fff; }
+  #recBtn:hover { background: #92b4ff; }
+  #recBtn.recording { background: var(--danger); color: #fff; }
 
-  input[type=search] {
+  /* --- GRID: tasks + chat --------------------------------------------------- */
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 680px) {
+    .grid2 { grid-template-columns: 1fr; }
+  }
+
+  /* --- PANELS --------------------------------------------------------------- */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .panel h2 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  /* --- TASKS ---------------------------------------------------------------- */
+  .task-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .task-item:last-child { border-bottom: 0; }
+  .task-item input[type=checkbox] { margin-top: 2px; cursor: pointer; accent-color: var(--ok); flex-shrink: 0; }
+  .task-content { flex: 1; }
+  .task-content span { display: block; }
+  .task-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .priority-dot {
+    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-top: 5px;
+  }
+  .pri-1 { background: var(--p1); }
+  .pri-2 { background: var(--p2); }
+  .pri-3 { background: var(--p3); }
+  .pri-4 { background: var(--p4); }
+  .pri-5 { background: var(--p5); }
+
+  /* --- CHAT ----------------------------------------------------------------- */
+  #chatMessages {
+    height: 240px;
+    overflow-y: auto;
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .chat-msg { font-size: 13px; line-height: 1.5; max-width: 92%; }
+  .chat-msg.user { align-self: flex-end; background: var(--accent); color: #0e0f12; border-radius: 10px 10px 2px 10px; padding: 8px 12px; font-weight: 500; }
+  .chat-msg.sid  { align-self: flex-start; background: #1e2128; border: 1px solid var(--border); border-radius: 10px 10px 10px 2px; padding: 8px 12px; white-space: pre-wrap; }
+  .chat-msg.sid.thinking { color: var(--muted); font-style: italic; }
+  .chat-row { display: flex; gap: 8px; }
+  #chatInput {
     flex: 1;
-    padding: 12px 14px;
+    padding: 9px 12px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    resize: none;
+  }
+  #chatInput:focus { border-color: var(--accent); }
+  #chatSend {
+    padding: 9px 16px;
+    background: var(--accent);
+    color: #0e0f12;
+    border: 0;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #chatSend:disabled { background: var(--border); color: var(--muted); cursor: default; }
+
+  /* --- TIMELINE ------------------------------------------------------------- */
+  .thought {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .thought:last-child { border-bottom: 0; }
+  .thought .meta { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .type-badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--border);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-right: 4px;
+  }
+  .type-task       { background: #2a1f4a; color: #a78bfa; }
+  .type-idea       { background: #1a2f3a; color: #7aa2ff; }
+  .type-reflection { background: #1a3a2f; color: #5ad19a; }
+
+  /* --- SEARCH --------------------------------------------------------------- */
+  .search-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  #searchBox {
+    flex: 1;
+    padding: 10px 14px;
     background: var(--panel);
     color: var(--text);
     border: 1px solid var(--border);
@@ -61,47 +203,72 @@
     font-size: 14px;
     outline: none;
   }
-  input[type=search]:focus { border-color: var(--accent); }
-
-  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-  section h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); font-weight: 600; }
-
-  .thought, .result {
-    padding: 10px 12px;
+  #searchBox:focus { border-color: var(--accent); }
+  .result {
+    padding: 9px 12px;
     border-bottom: 1px solid var(--border);
     font-size: 13px;
   }
-  .thought:last-child, .result:last-child { border-bottom: 0; }
-  .thought .meta, .result .meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
-  .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+  .result:last-child { border-bottom: 0; }
+  .result .meta { color: var(--muted); font-size: 11px; margin-top: 3px; }
 
-  footer { padding: 12px 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; text-align: center; }
+  .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
+
+  footer {
+    padding: 10px 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>SID — Subjective Intelligence Daemon</h1>
-  <div class="status"><span id="dot" class="dot idle"></span><span id="status-text">idle</span></div>
+  <h1>SID</h1>
+  <div class="hdr-right">
+    <div class="fsm-state"><span id="dot" class="dot idle"></span><span id="status-text">idle</span></div>
+  </div>
 </header>
 
 <main>
-  <div class="row">
-    <button id="recBtn" class="record">Hold to record</button>
+  <button id="recBtn">⏺ Record</button>
+
+  <div class="grid2">
+
+    <!-- TASKS -->
+    <div class="panel">
+      <h2>Pending tasks <span id="taskCount" style="font-weight:400;color:var(--muted)"></span></h2>
+      <div id="taskList"><div class="empty">Loading...</div></div>
+    </div>
+
+    <!-- CHAT -->
+    <div class="panel">
+      <h2>Chat with SID</h2>
+      <div id="chatMessages"></div>
+      <div class="chat-row">
+        <textarea id="chatInput" rows="2" placeholder="Ask SID anything..."></textarea>
+        <button id="chatSend">Send</button>
+      </div>
+    </div>
+
   </div>
 
-  <div class="row">
+  <!-- SEARCH -->
+  <div class="search-row">
     <input id="searchBox" type="search" placeholder="Search your thoughts..." />
   </div>
-
-  <section id="searchSection" style="display:none">
+  <div id="searchSection" class="panel" style="display:none; margin-bottom:16px;">
     <h2>Search results</h2>
     <div id="searchResults"></div>
-  </section>
+  </div>
 
-  <section>
-    <h2>Recent thoughts</h2>
+  <!-- TIMELINE -->
+  <div class="panel">
+    <h2>Today's timeline</h2>
     <div id="timeline"><div class="empty">No thoughts yet today.</div></div>
-  </section>
+  </div>
 </main>
 
 <footer id="statsFooter">Today: — thoughts | LLM calls: —</footer>
@@ -110,17 +277,25 @@
 const API = "";
 let sessionId = null;
 let recording = false;
+let chatHistory = [];
 
-const recBtn = document.getElementById("recBtn");
-const dot = document.getElementById("dot");
-const statusText = document.getElementById("status-text");
-const timelineEl = document.getElementById("timeline");
-const statsFooter = document.getElementById("statsFooter");
-const searchBox = document.getElementById("searchBox");
-const searchSection = document.getElementById("searchSection");
-const searchResults = document.getElementById("searchResults");
+// ── Elements ─────────────────────────────────────────────────────────────────
+const recBtn       = document.getElementById("recBtn");
+const dot          = document.getElementById("dot");
+const statusText   = document.getElementById("status-text");
+const taskList     = document.getElementById("taskList");
+const taskCount    = document.getElementById("taskCount");
+const chatMessages = document.getElementById("chatMessages");
+const chatInput    = document.getElementById("chatInput");
+const chatSend     = document.getElementById("chatSend");
+const timelineEl   = document.getElementById("timeline");
+const statsFooter  = document.getElementById("statsFooter");
+const searchBox    = document.getElementById("searchBox");
+const searchSection= document.getElementById("searchSection");
+const searchResults= document.getElementById("searchResults");
 
-async function api(path, opts={}) {
+// ── API helper ────────────────────────────────────────────────────────────────
+async function api(path, opts = {}) {
   const res = await fetch(API + path, {
     headers: { "Content-Type": "application/json" },
     ...opts,
@@ -134,12 +309,17 @@ async function api(path, opts={}) {
   return res.json();
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+}
+
+// ── Recording ─────────────────────────────────────────────────────────────────
 async function startRecording() {
   try {
     const r = await api("/api/voice/start", { method: "POST", body: JSON.stringify({}) });
     sessionId = r.session_id;
     recording = true;
-    recBtn.textContent = "Recording... (click to stop)";
+    recBtn.textContent = "⏹ Stop recording";
     recBtn.classList.add("recording");
   } catch (e) { alert("Start failed: " + e.message); }
 }
@@ -153,53 +333,158 @@ async function stopRecording() {
     });
     recording = false;
     sessionId = null;
-    recBtn.textContent = "Hold to record";
+    recBtn.textContent = "⏺ Record";
     recBtn.classList.remove("recording");
-    if (r) loadTimeline();
+    if (r) { loadTimeline(); loadTasks(); }
   } catch (e) {
     recording = false; sessionId = null;
-    recBtn.textContent = "Hold to record";
+    recBtn.textContent = "⏺ Record";
     recBtn.classList.remove("recording");
     alert("Stop failed: " + e.message);
   }
 }
 
-recBtn.addEventListener("click", () => {
-  if (recording) stopRecording(); else startRecording();
+recBtn.addEventListener("click", () => recording ? stopRecording() : startRecording());
+
+// ── Tasks ─────────────────────────────────────────────────────────────────────
+async function loadTasks() {
+  try {
+    const r = await api("/api/agent/tasks");
+    const tasks = r.tasks || [];
+    taskCount.textContent = tasks.length ? `(${tasks.length})` : "";
+    if (!tasks.length) {
+      taskList.innerHTML = '<div class="empty">No pending tasks.</div>';
+      return;
+    }
+    taskList.innerHTML = tasks.map(t => `
+      <div class="task-item" id="task-${escapeHtml(t.id)}">
+        <div class="priority-dot pri-${t.priority || 3}"></div>
+        <input type="checkbox" onchange="markDone('${escapeHtml(t.id)}', '${escapeHtml(t.thought_id)}')" />
+        <div class="task-content">
+          <span>${escapeHtml(t.content)}</span>
+          <span class="task-meta">
+            p${t.priority || 3}${t.due_date ? ' · due ' + escapeHtml(t.due_date) : ''}${t.next_step ? ' · next: ' + escapeHtml(t.next_step) : ''}
+          </span>
+        </div>
+      </div>
+    `).join("");
+  } catch (e) {
+    taskList.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function markDone(extractionId, thoughtId) {
+  try {
+    await api(`/api/thoughts/${thoughtId}/extraction/${extractionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "done" }),
+    });
+    const el = document.getElementById("task-" + extractionId);
+    if (el) {
+      el.style.opacity = "0.4";
+      setTimeout(() => { el.remove(); loadTasks(); }, 600);
+    }
+  } catch (e) {
+    alert("Could not mark done: " + e.message);
+  }
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+function appendMsg(role, text) {
+  const div = document.createElement("div");
+  div.className = "chat-msg " + role;
+  div.textContent = text;
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  return div;
+}
+
+async function sendChat() {
+  const msg = chatInput.value.trim();
+  if (!msg) return;
+  chatInput.value = "";
+  chatSend.disabled = true;
+
+  appendMsg("user", msg);
+  const thinking = appendMsg("sid thinking", "…");
+
+  try {
+    const r = await api("/api/agent/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: msg, history: chatHistory }),
+    });
+    thinking.remove();
+    appendMsg("sid", r.response || "");
+    chatHistory.push({ role: "user", content: msg });
+    chatHistory.push({ role: "assistant", content: r.response || "" });
+    if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);
+  } catch (e) {
+    thinking.remove();
+    appendMsg("sid", "Error: " + e.message);
+  }
+  chatSend.disabled = false;
+  chatInput.focus();
+}
+
+chatSend.addEventListener("click", sendChat);
+chatInput.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
+
+// ── Timeline ─────────────────────────────────────────────────────────────────
+function typeClass(type) {
+  if (!type) return "";
+  if (type === "task") return "type-task";
+  if (type === "idea") return "type-idea";
+  if (type === "reflection") return "type-reflection";
+  return "";
+}
 
 async function loadTimeline() {
   try {
     const r = await api("/api/thoughts/timeline");
-    const recent = (r.thoughts || []).slice(-10).reverse();
-    if (recent.length === 0) {
+    const thoughts = (r.thoughts || []).slice().reverse();
+    if (!thoughts.length) {
       timelineEl.innerHTML = '<div class="empty">No thoughts yet today.</div>';
       return;
     }
-    timelineEl.innerHTML = recent.map(t => `
+    timelineEl.innerHTML = thoughts.map(t => `
       <div class="thought">
-        <div>${escapeHtml(t.summary || t.clean_text || t.raw_text || "")}</div>
-        <div class="meta">${t.type || "raw"} · ${t.timestamp || ""}</div>
+        <div><span class="type-badge ${typeClass(t.type)}">${escapeHtml(t.type || "raw")}</span>${escapeHtml(t.summary || t.clean_text || t.raw_text || "")}</div>
+        <div class="meta">${t.timestamp ? t.timestamp.slice(11,16) : ""} ${t.energy_hint ? "· " + escapeHtml(t.energy_hint) : ""}</div>
       </div>
     `).join("");
   } catch {}
 }
 
+// ── Status poll ───────────────────────────────────────────────────────────────
 async function pollStatus() {
   try {
-    const r = await api("/api/voice/status");
-    if (r.recording) { dot.className = "dot rec"; statusText.textContent = "recording"; }
-    else { dot.className = "dot idle"; statusText.textContent = "idle"; }
+    const r = await api("/api/agent/status");
+    const state = r.state || "idle";
+    if (recording || state === "capturing") {
+      dot.className = "dot rec";
+      statusText.textContent = "recording";
+    } else if (state === "idle" || state === "processing") {
+      dot.className = "dot idle";
+      statusText.textContent = state;
+    } else {
+      dot.className = "dot busy";
+      statusText.textContent = state.replace(/_/g, " ");
+    }
   } catch {}
 }
 
+// ── Stats ────────────────────────────────────────────────────────────────────
 async function loadStats() {
   try {
     const s = await api("/api/stats");
-    statsFooter.textContent = `Today: ${s.thoughts_today} thoughts | LLM calls: ${s.llm_calls_today}`;
+    statsFooter.textContent =
+      `Today: ${s.thoughts_today} thoughts · ${s.pending_tasks} tasks pending · LLM calls: ${s.llm_calls_today} · DB: ${s.db_size_mb.toFixed(1)} MB`;
   } catch {}
 }
 
+// ── Search ────────────────────────────────────────────────────────────────────
 let searchTimer;
 searchBox.addEventListener("input", () => {
   clearTimeout(searchTimer);
@@ -209,35 +494,33 @@ searchBox.addEventListener("input", () => {
     try {
       const r = await api("/api/thoughts/search?q=" + encodeURIComponent(q));
       searchSection.style.display = "block";
-      if (!r.results || r.results.length === 0) {
+      if (!r.results || !r.results.length) {
         searchResults.innerHTML = '<div class="empty">No matches.</div>';
         return;
       }
       searchResults.innerHTML = r.results.map(s => `
         <div class="result">
           <div>${escapeHtml(s.summary || s.text || "")}</div>
-          <div class="meta">${(s.type || "")} · ${s.date || ""} · score ${(s.score || 0).toFixed(2)}</div>
+          <div class="meta">${escapeHtml(s.type || "")} · ${escapeHtml(s.date || "")} · ${(s.score || 0).toFixed(2)}</div>
         </div>
       `).join("");
     } catch (e) {
       searchResults.innerHTML = `<div class="empty">Search error: ${escapeHtml(e.message)}</div>`;
       searchSection.style.display = "block";
     }
-  }, 250);
+  }, 280);
 });
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-  })[c]);
-}
-
+// ── Init ──────────────────────────────────────────────────────────────────────
 loadTimeline();
+loadTasks();
 loadStats();
 pollStatus();
-setInterval(pollStatus, 2000);
-setInterval(loadStats, 30000);
-setInterval(loadTimeline, 15000);
+
+setInterval(pollStatus,   3000);
+setInterval(loadStats,   30000);
+setInterval(loadTimeline, 20000);
+setInterval(loadTasks,   20000);
 </script>
 </body>
 </html>

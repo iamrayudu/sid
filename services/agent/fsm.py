@@ -6,11 +6,15 @@ Suppression: user can say 'not now' to silence check-ins for N hours.
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("sid.agent.fsm")
+
+_STATE_FILE = Path.home() / ".sid" / "agent_state.json"
 
 
 class AgentState(Enum):
@@ -73,7 +77,32 @@ class AgentFSM:
     def __init__(self):
         self.state = AgentState.IDLE
         self._suppressed_until: Optional[datetime.datetime] = None
-        self._last_checkin: Optional[datetime.datetime] = None
+        self._last_checkin: Optional[datetime.datetime] = self._load_last_checkin()
+
+    def _load_last_checkin(self) -> Optional[datetime.datetime]:
+        try:
+            if _STATE_FILE.exists():
+                data = json.loads(_STATE_FILE.read_text())
+                iso = data.get("last_checkin")
+                if iso:
+                    return datetime.datetime.fromisoformat(iso)
+        except Exception:
+            pass
+        return None
+
+    def _save_state(self) -> None:
+        try:
+            _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            data = {}
+            if _STATE_FILE.exists():
+                try:
+                    data = json.loads(_STATE_FILE.read_text())
+                except Exception:
+                    pass
+            data["last_checkin"] = self._last_checkin.isoformat() if self._last_checkin else None
+            _STATE_FILE.write_text(json.dumps(data))
+        except Exception as e:
+            logger.warning("Failed to persist agent state: %s", e)
 
     def transition(self, to: AgentState) -> bool:
         """Attempt a state transition. Returns True if successful."""
@@ -107,6 +136,7 @@ class AgentFSM:
 
     def mark_checkin(self) -> None:
         self._last_checkin = datetime.datetime.now()
+        self._save_state()
 
     @property
     def last_checkin_iso(self) -> Optional[str]:

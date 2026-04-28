@@ -7,6 +7,15 @@ from contextlib import asynccontextmanager
 from config.settings import get_settings
 
 class DatabaseManager:
+    # Columns to add to existing tables; each gets its own try/except for idempotency
+    _MIGRATIONS = [
+        "ALTER TABLE extractions ADD COLUMN milestone_parent_id TEXT",
+        "ALTER TABLE extractions ADD COLUMN percentage_complete REAL DEFAULT 0",
+        "ALTER TABLE extractions ADD COLUMN time_estimate_hours REAL",
+        "ALTER TABLE extractions ADD COLUMN next_step TEXT",
+        "ALTER TABLE extractions ADD COLUMN closure_note TEXT",
+    ]
+
     def __init__(self):
         self.settings = get_settings()
         self.db_path = self.settings.db_path
@@ -15,17 +24,19 @@ class DatabaseManager:
     async def init_db(self):
         """Initializes the database, ensures directories exist, executes schema."""
         self.settings.ensure_data_dir()
-        
-        # Read the schema file
+
         with open(self.schema_path, "r", encoding="utf-8") as f:
             schema_sql = f.read()
-            
+
         async with aiosqlite.connect(self.db_path) as db:
-            # Enable WAL mode for concurrent write resilience and read speeds
             await db.execute("PRAGMA journal_mode=WAL;")
-            # Synchronous PRAGMA is generally NORMAL in WAL mode
             await db.execute("PRAGMA synchronous=NORMAL;")
             await db.executescript(schema_sql)
+            for sql in self._MIGRATIONS:
+                try:
+                    await db.execute(sql)
+                except aiosqlite.OperationalError:
+                    pass  # column already exists
             await db.commit()
 
     @asynccontextmanager

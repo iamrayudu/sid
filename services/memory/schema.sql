@@ -73,6 +73,30 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     success INTEGER DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS task_closures (
+    id TEXT PRIMARY KEY,
+    extraction_id TEXT NOT NULL,
+    learning TEXT,
+    what_went_wrong TEXT,
+    would_do_differently TEXT,
+    negligence_flagged INTEGER DEFAULT 0,
+    energy_reflection TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(extraction_id) REFERENCES extractions(id)
+);
+
+CREATE TABLE IF NOT EXISTS weekly_records (
+    week_start TEXT PRIMARY KEY,
+    week_end TEXT NOT NULL,
+    reflection TEXT,
+    planned_tasks INTEGER DEFAULT 0,
+    completed_tasks INTEGER DEFAULT 0,
+    completion_rate REAL,
+    patterns TEXT,
+    key_learning TEXT,
+    created_at TEXT NOT NULL
+);
+
 -- Performance indexes
 CREATE INDEX IF NOT EXISTS idx_thoughts_session ON thoughts(session_id);
 CREATE INDEX IF NOT EXISTS idx_thoughts_date ON thoughts(created_at);
@@ -80,5 +104,7 @@ CREATE INDEX IF NOT EXISTS idx_thoughts_type ON thoughts(type);
 CREATE INDEX IF NOT EXISTS idx_thoughts_stage ON thoughts(processing_stage);
 CREATE INDEX IF NOT EXISTS idx_extractions_thought ON extractions(thought_id);
 CREATE INDEX IF NOT EXISTS idx_extractions_status ON extractions(status);
+CREATE INDEX IF NOT EXISTS idx_extractions_created ON extractions(thought_id, status);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_timestamp ON llm_calls(timestamp);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model);
+CREATE INDEX IF NOT EXISTS idx_task_closures_extraction ON task_closures(extraction_id);

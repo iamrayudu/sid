@@ -180,8 +180,8 @@ async def chat(
     tools_used: List[str] = []
 
     gateway = get_gateway()
-    client = gateway.client
     model = gateway.model_for("agent_chat")
+    client = gateway.client
 
     messages: List[Dict[str, str]] = [{"role": "system", "content": _SYSTEM}]
     if history:
@@ -190,12 +190,24 @@ async def chat(
 
     # ReAct loop
     for _ in range(max_tool_rounds):
-        response = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=_TOOL_SCHEMAS,
-            tool_choice="auto",
-        )
+        call_start = time.perf_counter()
+        response = None
+        success = True
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=_TOOL_SCHEMAS,
+                tool_choice="auto",
+            )
+        except Exception:
+            success = False
+            raise
+        finally:
+            call_ms = int((time.perf_counter() - call_start) * 1000)
+            pt = response.usage.prompt_tokens if response and response.usage else 0
+            ct = response.usage.completion_tokens if response and response.usage else 0
+            await gateway._record_call(model, "agent_chat", pt, ct, call_ms, success)
 
         msg = response.choices[0].message
 
