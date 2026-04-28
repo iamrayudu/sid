@@ -1,6 +1,7 @@
 """SID FastAPI application — entrypoint wired up by `python main.py`."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,72 +22,86 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 INDEX_HTML = TEMPLATES_DIR / "index.html"
 
 
+async def _notify(text: str, event_type: str) -> None:
+    """Deliver a scheduled event to the user via TTS."""
+    logger.info("Agent event [%s]: %s", event_type, text[:80])
+    try:
+        from services.tts import get_tts
+        await get_tts().speak(text)
+    except Exception as e:
+        logger.warning("TTS notify failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.ensure_data_dir()
 
-    # Initialise memory (creates tables if needed)
+    # ── Memory init ───────────────────────────────────────────────────────────
     try:
-        store = get_store()
-        init_fn = getattr(store, "init_memory", None)
-        if init_fn is not None:
-            res = init_fn()
-            if hasattr(res, "__await__"):
-                await res
-        else:
-            logger.warning("MemoryStore has no init_memory(); skipping init.")
+        await get_store().init_memory()
+        logger.info("Memory initialised at %s", settings.db_path)
     except Exception as e:
         logger.error("Memory init failed: %s", e)
 
-    # Best-effort LLM health check — don't crash if Ollama isn't running.
+    # ── LLM health check (best-effort) ────────────────────────────────────────
     try:
-        gw = get_gateway()
-        hc = getattr(gw, "health_check", None)
-        if hc is not None:
-            res = hc()
-            if hasattr(res, "__await__"):
-                await res
+        await get_gateway().health_check()
     except Exception as e:
-        logger.warning("LLM gateway health check failed (Ollama may be down): %s", e)
+        logger.warning("LLM health check failed (Ollama may be down): %s", e)
 
-    # Optional processing worker startup.
-    worker_task = None
+    # ── Processing queue worker ───────────────────────────────────────────────
     try:
-        from services.processing import queue as _q  # type: ignore
-        start_fn = (
-            getattr(_q, "start_worker", None)
-            or getattr(_q, "start", None)
-        )
-        if callable(start_fn):
-            res = start_fn()
-            if hasattr(res, "__await__"):
-                worker_task = await res
-            else:
-                worker_task = res
-            logger.info("Processing worker started.")
-    except ImportError:
-        pass
+        from services.processing.queue import start_worker
+        await start_worker()
+        logger.info("Processing worker started.")
     except Exception as e:
         logger.warning("Processing worker not started: %s", e)
 
+    # ── Scheduler (morning, evening, check-in, weekly) ────────────────────────
+    scheduler = None
+    try:
+        from services.agent.scheduler import init_scheduler
+        scheduler = init_scheduler(notify=_notify)
+        scheduler.start()
+        logger.info("Agent scheduler started.")
+    except Exception as e:
+        logger.warning("Agent scheduler not started: %s", e)
+
+    # ── Document watcher ──────────────────────────────────────────────────────
+    doc_watcher = None
+    try:
+        from services.document_agent import get_doc_watcher
+        doc_watcher = get_doc_watcher()
+        doc_watcher.start(asyncio.get_event_loop())
+        logger.info("Document watcher started.")
+    except Exception as e:
+        logger.warning("Document watcher not started: %s", e)
+
     yield
 
-    # Shutdown — best effort
+    # ── Graceful shutdown ─────────────────────────────────────────────────────
+    if doc_watcher:
+        try:
+            doc_watcher.stop()
+        except Exception:
+            pass
+
+    if scheduler:
+        try:
+            scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+
     try:
-        from services.processing import queue as _q  # type: ignore
-        stop_fn = getattr(_q, "stop_worker", None) or getattr(_q, "stop", None)
-        if callable(stop_fn):
-            res = stop_fn()
-            if hasattr(res, "__await__"):
-                await res
+        from services.processing.queue import stop_worker
+        await stop_worker()
     except Exception:
         pass
 
 
 app = FastAPI(title="SID API", version="1.0.0", lifespan=lifespan)
 
-# CORS — localhost only.
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
@@ -95,7 +110,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
 app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(thoughts.router, prefix="/api/thoughts", tags=["thoughts"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])

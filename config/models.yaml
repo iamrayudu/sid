@@ -1,26 +1,91 @@
 # SID Model Configuration
-# Change model names here to swap models — no code changes needed
+# ─────────────────────────────────────────────────────────────────────────────
+# PURPOSE-BASED routing: every task maps to a model independently.
+# To swap any model: change the value here. Zero code changes needed.
+# All names must match exactly what `ollama list` shows.
+# ─────────────────────────────────────────────────────────────────────────────
 
-llm:
-  fast_model: qwen2.5:3b       # Stage 1 classification (~2-3s)
-  deep_model: qwen2.5:14b      # Stage 2 extraction (~10-15s)
-  ollama_base_url: http://localhost:11434
+models:
+  # Stage 1: fast classification + text cleaning. Speed > depth.
+  # Alternatives: gemma3:4b, llama3.2:3b
+  stage1: qwen2.5:3b
 
-embeddings:
-  model: all-MiniLM-L6-v2      # 384-dim, 24MB, fast on CPU
-  quantize: true                # int8 quantization for speed
+  # Stage 2: deep extraction — tasks, entities, relationships, intent.
+  # Alternatives: gemma3:12b, phi4:14b, qwen2.5:32b
+  stage2: qwen2.5:14b
 
-# Cost tracking (local = $0, but we track usage for capacity planning)
-# These can be set to real costs if you add a cloud fallback later
+  # Conversational reasoning over memory. Interrogation mode (5-20 questions).
+  # Alternatives: phi4:14b, gemma3:27b
+  agent_chat: qwen2.5:14b
+
+  # Morning brief: structured day plan + narrative from pending + yesterday.
+  morning: qwen2.5:14b
+
+  # Evening reflection: journal narrative + task completion analysis.
+  evening: qwen2.5:14b
+
+  # 4-hour check-in: brief status question. Must be fast.
+  checkin: qwen2.5:3b
+
+  # Weekly review: deep behavioral autopsy. Use strongest available model.
+  # Alternatives: phi4:14b (best for reasoning), gemma3:27b, qwen2.5:32b
+  weekly: qwen2.5:14b
+
+  # Critique engine: behavioral profiling, negligence detection.
+  # phi4:14b is exceptional at analytical/critical reasoning.
+  critique: qwen2.5:14b
+
+  # Document agent: reading comprehension + extraction from PDF/text/markdown.
+  # Alternatives: gemma3:12b (excellent at document understanding)
+  document: qwen2.5:14b
+
+  # Milestone planning: breaks tasks into steps via conversation.
+  milestone: qwen2.5:14b
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Embedding model — sentence-transformers, runs locally on CPU. NOT Ollama.
+# WARNING: changing this invalidates ALL existing LanceDB vectors.
+# If changed: delete ~/.sid/vectors/ and let SID rebuild on next startup.
+# ─────────────────────────────────────────────────────────────────────────────
+embedding: all-MiniLM-L6-v2
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ollama connection
+# ─────────────────────────────────────────────────────────────────────────────
+ollama_base_url: http://localhost:11434
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Whisper STT model (trade speed vs accuracy)
+# tiny.en  — 39MB,  fastest, rough accuracy
+# base.en  — 74MB,  good balance (default)
+# small.en — 244MB, more accurate, slower
+# ─────────────────────────────────────────────────────────────────────────────
+whisper_model: base.en
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cost tracking (local = $0, tracked for capacity planning)
+# Set real values here if cloud fallback is added later.
+# ─────────────────────────────────────────────────────────────────────────────
 cost_per_1k_tokens:
-  qwen2.5:3b: 0.0
-  qwen2.5:14b: 0.0
   default: 0.0
 
-# Whisper model options (trade speed vs accuracy):
-# tiny.en  — 39MB, fastest, less accurate
-# base.en  — 74MB, good balance (RECOMMENDED)
-# small.en — 244MB, more accurate, slower
-# medium.en — 769MB, most accurate, slow
-whisper:
-  model: base.en
+# ─────────────────────────────────────────────────────────────────────────────
+# Hardware reference — pick models based on available RAM
+#
+# Model           RAM      Latency    Best for
+# qwen2.5:3b      ~2GB     1-2s       stage1, checkin
+# qwen2.5:7b      ~4GB     3-4s       balanced quality/speed
+# qwen2.5:14b     ~8GB     8-12s      stage2, chat, routines (default)
+# qwen2.5:32b     ~18GB    25s        near GPT-4 quality locally
+# gemma3:4b       ~2.5GB   2s         stage1 alt, excellent instructions
+# gemma3:12b      ~7GB     6-8s       stage2 alt, document extraction
+# gemma3:27b      ~15GB    20s        weekly/critique with more RAM
+# phi4:14b        ~8GB     8-12s      best for critique + reasoning
+# llama3.2:3b     ~2GB     1-2s       stage1 alt, very reliable
+# llama3.1:8b     ~5GB     4-5s       general purpose alternative
+#
+# Recommended:
+# 16GB RAM → qwen2.5:3b (stage1/checkin) + qwen2.5:14b (everything else)
+# 32GB RAM → add phi4:14b for critique/weekly
+# 64GB RAM → qwen2.5:32b for all deep tasks
+# ─────────────────────────────────────────────────────────────────────────────

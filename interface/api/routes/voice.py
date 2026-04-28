@@ -68,6 +68,14 @@ async def start_recording(body: Optional[StartRequest] = None) -> StartResponse:
 
     _recording = True
     _current_session_id = session_id
+
+    try:
+        date = started_at[:10]
+        await get_store().create_session(session_id, started_at, date)
+    except Exception as e:
+        import logging
+        logging.getLogger("sid.api.voice").warning("Failed to create session %s: %s", session_id, e)
+
     return StartResponse(session_id=session_id, started_at=started_at)
 
 
@@ -96,6 +104,12 @@ async def stop_recording(body: StopRequest):
         await get_store().save_raw_chunk(chunk)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save chunk: {e}")
+
+    try:
+        await get_store().touch_session(body.session_id)
+    except Exception as e:
+        import logging
+        logging.getLogger("sid.api.voice").warning("Failed to update session %s: %s", body.session_id, e)
 
     # Fire-and-forget: enqueue for async processing (Stage 1 + Stage 2 pipeline)
     try:

@@ -14,7 +14,7 @@ logger = logging.getLogger("sid.processing.pipeline")
 class PipelineState(TypedDict):
     chunk: RawChunk
     stage1: Optional[Stage1Output]
-    context_texts: List[str]
+    context_items: List[dict]   # [{thought_id, text, score}, ...]
     stage2: Optional[Stage2Output]
     entry: Optional[MemoryEntry]
 
@@ -57,7 +57,7 @@ async def run_pipeline(chunk: RawChunk) -> Optional[MemoryEntry]:
     state: PipelineState = {
         "chunk": chunk,
         "stage1": None,
-        "context_texts": [],
+        "context_items": [],
         "stage2": None,
         "entry": None,
     }

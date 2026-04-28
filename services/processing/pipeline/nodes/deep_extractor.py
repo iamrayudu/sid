@@ -13,7 +13,7 @@ Cleaned text: {clean_text}
 Type: {thought_type}
 Summary: {summary}
 
-Related past thoughts for context (for relationship detection):
+Related past thoughts (ID: text) — use these IDs when extracting relationships:
 {context}
 
 Extract the following:
@@ -21,7 +21,7 @@ Extract the following:
 - entities: named people, projects, places, concepts, tools, companies mentioned
 - sub_ideas: distinct ideas nested within this thought (if any)
 - intent: why did the user say this? what problem are they solving?
-- relationships: links to past thoughts (use IDs from the context above if relevant)
+- relationships: links to past thoughts — set related_thought_id to the ID shown above
 - emotional_tone: overall emotional quality of this thought
 
 Respond with JSON matching the schema exactly."""
@@ -30,13 +30,15 @@ Respond with JSON matching the schema exactly."""
 async def deep_extract(state: dict) -> dict:
     chunk = state["chunk"]
     stage1 = state.get("stage1")
-    context_texts = state.get("context_texts", [])
+    context_items = state.get("context_items", [])
 
     if not stage1:
         return {"stage2": Stage2Output()}
 
-    if context_texts:
-        context_str = "\n".join(f"- {t}" for t in context_texts)
+    if context_items:
+        context_str = "\n".join(
+            f"[{item['thought_id']}]: {item['text']}" for item in context_items
+        )
     else:
         context_str = "No related past thoughts found."
 

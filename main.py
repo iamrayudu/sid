@@ -13,7 +13,7 @@ def main():
 
     print(f"Starting SID on http://{settings.api_host}:{settings.api_port}")
     print(f"Data directory: {settings.data_dir}")
-    print(f"Models: fast={settings.fast_model}, deep={settings.deep_model}")
+    print(f"Docs watch dir: ~/Documents/SID/")
 
     uvicorn.run(
         "interface.api.main:app",

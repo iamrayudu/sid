@@ -40,5 +40,9 @@ python-multipart>=0.0.9
 # Scheduler
 apscheduler>=3.10.0
 
+# Document agent
+watchdog>=4.0.0        # Filesystem event watching
+pymupdf>=1.24.0        # PDF extraction (import as 'fitz')
+
 # macOS menubar (Phase 4)
 # rumps>=0.4.0          # Install manually when needed: pip install rumps

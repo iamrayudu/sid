@@ -1,9 +1,11 @@
 import time
 import asyncio
 import logging
+from pathlib import Path
 from typing import Type, TypeVar, List, Dict, Any, Optional
 
 import httpx
+import yaml
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
@@ -16,6 +18,32 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+_MODELS_YAML = Path(__file__).parent.parent.parent / "config" / "models.yaml"
+
+
+def _load_model_map() -> dict:
+    try:
+        with open(_MODELS_YAML, "r") as f:
+            data = yaml.safe_load(f)
+        return data.get("models", {})
+    except Exception as e:
+        logger.warning("Could not load config/models.yaml, using defaults: %s", e)
+        return {}
+
+
+_DEFAULT_MODELS = {
+    "stage1": "qwen2.5:3b",
+    "stage2": "qwen2.5:14b",
+    "agent_chat": "qwen2.5:14b",
+    "morning": "qwen2.5:14b",
+    "evening": "qwen2.5:14b",
+    "checkin": "qwen2.5:3b",
+    "weekly": "qwen2.5:14b",
+    "critique": "qwen2.5:14b",
+    "document": "qwen2.5:14b",
+    "milestone": "qwen2.5:14b",
+}
+
 
 class GatewayError(Exception):
     pass
@@ -24,8 +52,7 @@ class GatewayError(Exception):
 class LLMGateway:
     def __init__(self):
         self.settings = get_settings()
-        self.fast_model = self.settings.fast_model
-        self.deep_model = self.settings.deep_model
+        self._model_map: dict = {**_DEFAULT_MODELS, **_load_model_map()}
 
         self.client = AsyncOpenAI(
             base_url=f"{self.settings.ollama_base_url}/v1",
@@ -33,10 +60,24 @@ class LLMGateway:
             timeout=120.0
         )
 
-        self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        self._embedder: Optional[SentenceTransformer] = None
+
+    @property
+    def embedder(self) -> SentenceTransformer:
+        if self._embedder is None:
+            logger.info("Loading sentence-transformers all-MiniLM-L6-v2 (first use)...")
+            self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        return self._embedder
+
+    def model_for(self, purpose: str) -> str:
+        """Return the configured model name for a given purpose."""
+        model = self._model_map.get(purpose)
+        if not model:
+            logger.warning("No model configured for purpose '%s', falling back to stage2", purpose)
+            model = self._model_map.get("stage2", "qwen2.5:14b")
+        return model
 
     async def health_check(self) -> bool:
-        """Verify Ollama is reachable. Returns True if healthy, logs warning and returns False otherwise."""
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{self.settings.ollama_base_url}/api/tags")
@@ -44,7 +85,7 @@ class LLMGateway:
             logger.info("Ollama health check passed.")
             return True
         except Exception as e:
-            logger.warning("Ollama health check failed (Ollama may not be running): %s", e)
+            logger.warning("Ollama health check failed: %s", e)
             return False
 
     async def _record_call(
@@ -67,20 +108,42 @@ class LLMGateway:
         )
 
         async def do_write():
-            from services.memory import get_store
-            store = get_store()
-            if store:
-                await store.write_llm_call(record)
+            try:
+                from services.memory import get_store
+                store = get_store()
+                if store:
+                    await store.write_llm_call(record)
+            except Exception as exc:
+                logger.debug("Metrics write failed (non-fatal): %s", exc)
 
         asyncio.create_task(do_write())
 
+    # ── Purpose-based entry point (preferred for all agent/routine calls) ──────
+
+    async def generate(self, purpose: str, prompt: str, schema: Type[T]) -> T:
+        """Structured call routed by purpose (resolves model from models.yaml)."""
+        model = self.model_for(purpose)
+        return await self._structured_call(model, purpose, prompt, schema)
+
+    async def chat_for(self, purpose: str, messages: List[Dict[str, str]]) -> str:
+        """Free-text chat routed by purpose."""
+        model = self.model_for(purpose)
+        return await self._chat_call(model, purpose, messages)
+
+    # ── Legacy helpers kept for pipeline compatibility ─────────────────────────
+
     async def fast(self, prompt: str, schema: Type[T]) -> T:
-        return await self._structured_call(self.fast_model, "stage1", prompt, schema)
+        return await self._structured_call(self.model_for("stage1"), "stage1", prompt, schema)
 
     async def deep(self, prompt: str, schema: Type[T]) -> T:
-        return await self._structured_call(self.deep_model, "stage2", prompt, schema)
+        return await self._structured_call(self.model_for("stage2"), "stage2", prompt, schema)
 
     async def chat(self, messages: List[Dict[str, str]], purpose: str = "agent_chat") -> str:
+        return await self._chat_call(self.model_for(purpose), purpose, messages)
+
+    # ── Core implementations ───────────────────────────────────────────────────
+
+    async def _chat_call(self, model: str, purpose: str, messages: List[Dict[str, str]]) -> str:
         start_time = time.perf_counter()
         success = True
         prompt_tokens = 0
@@ -88,7 +151,7 @@ class LLMGateway:
 
         try:
             response = await self.client.chat.completions.create(
-                model=self.deep_model,
+                model=model,
                 messages=messages
             )
             raw_content = response.choices[0].message.content
@@ -98,11 +161,11 @@ class LLMGateway:
             return raw_content
         except Exception as e:
             success = False
-            raise GatewayError(f"Ollama chat call failed: {e}")
+            raise GatewayError(f"Ollama chat call failed [{model}/{purpose}]: {e}")
         finally:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             await self._record_call(
-                model=self.deep_model,
+                model=model,
                 purpose=purpose,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
@@ -138,7 +201,6 @@ class LLMGateway:
             try:
                 return schema.model_validate_json(raw_content)
             except Exception:
-                # Retry once with explicit JSON instruction
                 retry_prompt = f"Respond ONLY with valid JSON matching this schema.\n\n{prompt}"
                 response2 = await self.client.chat.completions.create(
                     model=model,
@@ -155,7 +217,7 @@ class LLMGateway:
 
         except Exception as e:
             success = False
-            raise GatewayError(f"Ollama structured call failed: {e}")
+            raise GatewayError(f"Ollama structured call failed [{model}/{purpose}]: {e}")
         finally:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             await self._record_call(
@@ -174,3 +236,13 @@ class LLMGateway:
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
         vectors = self.embedder.encode(texts)
         return vectors.tolist()
+
+
+_gateway: Optional[LLMGateway] = None
+
+
+def get_gateway() -> LLMGateway:
+    global _gateway
+    if _gateway is None:
+        _gateway = LLMGateway()
+    return _gateway

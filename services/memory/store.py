@@ -328,6 +328,31 @@ class MemoryStore:
                 )
             await db.commit()
 
+    async def create_session(self, session_id: str, start_time: str, date: str, mode: str = "capture") -> None:
+        async with self.db_manager.get_connection() as db:
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO sessions (id, date, start_time, mode)
+                VALUES (?, ?, ?, ?)
+                """,
+                (session_id, date, start_time, mode),
+            )
+            await db.commit()
+
+    async def touch_session(self, session_id: str) -> None:
+        """Increment thought_count and set end_time to now."""
+        now = _utcnow_iso()
+        async with self.db_manager.get_connection() as db:
+            await db.execute(
+                """
+                UPDATE sessions
+                SET thought_count = thought_count + 1, end_time = ?
+                WHERE id = ?
+                """,
+                (now, session_id),
+            )
+            await db.commit()
+
     async def get_unprocessed_thoughts(self, limit: int = 10) -> List[Thought]:
         async with self.db_manager.get_connection() as db:
             cursor = await db.execute(
