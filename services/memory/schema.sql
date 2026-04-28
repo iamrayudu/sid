@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     success INTEGER DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS processing_queue (
+    id TEXT PRIMARY KEY,
+    chunk_json TEXT NOT NULL,
+    priority INTEGER DEFAULT 5,
+    status TEXT DEFAULT 'pending',
+    retries INTEGER DEFAULT 0,
+    last_error TEXT,
+    enqueued_at TEXT NOT NULL,
+    processed_at TEXT,
+    retry_after TEXT
+);
+
 CREATE TABLE IF NOT EXISTS task_closures (
     id TEXT PRIMARY KEY,
     extraction_id TEXT NOT NULL,
@@ -108,3 +120,4 @@ CREATE INDEX IF NOT EXISTS idx_extractions_created ON extractions(thought_id, st
 CREATE INDEX IF NOT EXISTS idx_llm_calls_timestamp ON llm_calls(timestamp);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model);
 CREATE INDEX IF NOT EXISTS idx_task_closures_extraction ON task_closures(extraction_id);
+CREATE INDEX IF NOT EXISTS idx_queue_pickup ON processing_queue(status, priority, enqueued_at);

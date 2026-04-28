@@ -50,7 +50,18 @@
   .dot.rec   { background: var(--danger); animation: pulse 1s infinite; }
   .dot.idle  { background: var(--ok); }
   .dot.busy  { background: var(--warn); }
+  .dot.down  { background: var(--danger); }
   @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+  .health-pill {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--border);
+    color: var(--muted);
+  }
+  .health-pill.ok    { background: rgba(90,209,154,0.15); color: var(--ok); }
+  .health-pill.warn  { background: rgba(245,166,35,0.15); color: var(--warn); }
+  .health-pill.down  { background: rgba(255,107,107,0.15); color: var(--danger); }
 
   main {
     flex: 1;
@@ -228,6 +239,8 @@
 <header>
   <h1>SID</h1>
   <div class="hdr-right">
+    <span id="queuePill" class="health-pill" style="display:none"></span>
+    <span id="ollamaPill" class="health-pill">checking…</span>
     <div class="fsm-state"><span id="dot" class="dot idle"></span><span id="status-text">idle</span></div>
   </div>
 </header>
@@ -458,6 +471,9 @@ async function loadTimeline() {
 }
 
 // ── Status poll ───────────────────────────────────────────────────────────────
+const queuePill  = document.getElementById("queuePill");
+const ollamaPill = document.getElementById("ollamaPill");
+
 async function pollStatus() {
   try {
     const r = await api("/api/agent/status");
@@ -471,6 +487,32 @@ async function pollStatus() {
     } else {
       dot.className = "dot busy";
       statusText.textContent = state.replace(/_/g, " ");
+    }
+
+    // Queue depth pill
+    const depth = r.queue_depth || 0;
+    if (depth > 0) {
+      queuePill.textContent = `queue: ${depth}`;
+      queuePill.className = "health-pill " + (depth > 5 ? "warn" : "");
+      queuePill.style.display = "inline-block";
+    } else {
+      queuePill.style.display = "none";
+    }
+
+    // Ollama health pill
+    const oh = r.ollama || {};
+    if (oh.stuck) {
+      ollamaPill.textContent = "Ollama: stuck";
+      ollamaPill.className = "health-pill down";
+      ollamaPill.title = oh.last_error || "";
+    } else if (!oh.healthy) {
+      ollamaPill.textContent = "Ollama: down";
+      ollamaPill.className = "health-pill down";
+      ollamaPill.title = oh.last_error || "";
+    } else {
+      ollamaPill.textContent = "Ollama: ok";
+      ollamaPill.className = "health-pill ok";
+      ollamaPill.title = oh.last_ok_seconds_ago != null ? `Last ok ${oh.last_ok_seconds_ago}s ago` : "";
     }
   } catch {}
 }

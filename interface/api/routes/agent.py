@@ -30,11 +30,21 @@ class SuppressRequest(BaseModel):
     hours: Optional[int] = 2
 
 
+class OllamaHealth(BaseModel):
+    healthy: bool
+    stuck: bool
+    last_ok_seconds_ago: Optional[int] = None
+    last_fail_seconds_ago: Optional[int] = None
+    last_error: Optional[str] = None
+    base_url: str
+
+
 class AgentStatus(BaseModel):
     state: str
     can_interrupt: bool
     suppressed_until: Optional[str] = None
     queue_depth: int
+    ollama: OllamaHealth
 
 
 class BriefResponse(BaseModel):
@@ -64,13 +74,15 @@ async def chat(body: ChatRequest) -> ChatResponse:
 async def status() -> AgentStatus:
     from services.agent.fsm import get_fsm
     from services.processing import queue_depth
+    from services.llm_gateway import get_gateway
     fsm = get_fsm()
     info = fsm.status_dict()
     return AgentStatus(
         state=info["state"],
         can_interrupt=info["can_interrupt"],
         suppressed_until=info["suppressed_until"],
-        queue_depth=queue_depth(),
+        queue_depth=await queue_depth(),
+        ollama=OllamaHealth(**get_gateway().health_status()),
     )
 
 

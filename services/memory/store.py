@@ -291,7 +291,7 @@ class MemoryStore:
 
         from services.processing import queue as _q  # type: ignore
         try:
-            queue_depth = _q.queue_depth()
+            queue_depth = await _q.queue_depth()
         except Exception:
             queue_depth = 0
 

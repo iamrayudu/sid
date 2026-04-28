@@ -43,10 +43,10 @@ class StatusResponse(BaseModel):
     queue_depth: int
 
 
-def _queue_depth() -> int:
+async def _queue_depth() -> int:
     try:
         from services.processing import queue_depth
-        return queue_depth()
+        return await queue_depth()
     except Exception:
         return 0
 
@@ -132,5 +132,5 @@ async def status() -> StatusResponse:
     return StatusResponse(
         recording=_recording,
         session_id=_current_session_id,
-        queue_depth=_queue_depth(),
+        queue_depth=await _queue_depth(),
     )

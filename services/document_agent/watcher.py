@@ -91,7 +91,7 @@ class DocumentWatcher:
             logger.warning("No content extracted from %s", path.name)
             return 0
 
-        from services.processing import enqueue
+        from services.processing import enqueue, PRIORITY_DOCUMENT
         from services.memory import get_store
 
         session_id = f"{_DOCS_SESSION_ID}-{path.stem[:20]}"
@@ -109,7 +109,7 @@ class DocumentWatcher:
 
             try:
                 await get_store().save_raw_chunk(chunk)
-                await enqueue(chunk)
+                await enqueue(chunk, priority=PRIORITY_DOCUMENT)
                 count += 1
             except Exception as e:
                 logger.error("Failed to enqueue chunk %d of %s: %s", i + 1, path.name, e)

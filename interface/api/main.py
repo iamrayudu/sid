@@ -45,10 +45,18 @@ async def lifespan(app: FastAPI):
         logger.error("Memory init failed: %s", e)
 
     # ── LLM health check (best-effort) ────────────────────────────────────────
+    gateway = get_gateway()
     try:
-        await get_gateway().health_check()
+        await gateway.health_check()
     except Exception as e:
         logger.warning("LLM health check failed (Ollama may be down): %s", e)
+
+    # ── Ollama health monitor (background polling) ────────────────────────────
+    try:
+        gateway.start_health_monitor()
+        logger.info("Ollama health monitor started.")
+    except Exception as e:
+        logger.warning("Ollama health monitor not started: %s", e)
 
     # ── Processing queue worker ───────────────────────────────────────────────
     try:
@@ -96,6 +104,11 @@ async def lifespan(app: FastAPI):
     try:
         from services.processing.queue import stop_worker
         await stop_worker()
+    except Exception:
+        pass
+
+    try:
+        await gateway.stop_health_monitor()
     except Exception:
         pass
 

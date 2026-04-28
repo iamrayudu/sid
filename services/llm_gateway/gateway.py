@@ -62,6 +62,69 @@ class LLMGateway:
 
         self._embedder: Optional[SentenceTransformer] = None
 
+        # Health tracking — updated by health_check() / monitor task
+        self._last_health_ok_at: Optional[float] = None
+        self._last_health_fail_at: Optional[float] = None
+        self._last_health_error: Optional[str] = None
+        self._health_monitor_task: Optional[asyncio.Task] = None
+        self._monitor_running: bool = False
+
+    # ── Health snapshot ────────────────────────────────────────────────────────
+
+    def health_status(self) -> dict:
+        """Return a snapshot of Ollama availability."""
+        now = time.time()
+        ok_at = self._last_health_ok_at
+        fail_at = self._last_health_fail_at
+        stuck_secs = self.settings.ollama_stuck_threshold_secs
+
+        # Healthy if last successful ping is more recent than last failure.
+        is_healthy = ok_at is not None and (fail_at is None or ok_at > fail_at)
+
+        # Stuck if we haven't seen success in a long while AND we have failures.
+        unhealthy_for = None
+        if not is_healthy and fail_at is not None:
+            unhealthy_for = int(now - (ok_at if ok_at else fail_at))
+        is_stuck = (not is_healthy) and (unhealthy_for is not None and unhealthy_for >= stuck_secs)
+
+        return {
+            "healthy": is_healthy,
+            "stuck": is_stuck,
+            "last_ok_seconds_ago": int(now - ok_at) if ok_at else None,
+            "last_fail_seconds_ago": int(now - fail_at) if fail_at else None,
+            "last_error": self._last_health_error,
+            "base_url": self.settings.ollama_base_url,
+        }
+
+    async def _monitor_loop(self) -> None:
+        interval = self.settings.ollama_healthcheck_interval_secs
+        logger.info("Ollama health monitor started (interval %ds).", interval)
+        while self._monitor_running:
+            try:
+                await self.health_check()
+            except Exception as e:
+                logger.debug("Health monitor swallowed error: %s", e)
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                break
+        logger.info("Ollama health monitor stopped.")
+
+    def start_health_monitor(self) -> None:
+        if self._health_monitor_task and not self._health_monitor_task.done():
+            return
+        self._monitor_running = True
+        self._health_monitor_task = asyncio.create_task(self._monitor_loop())
+
+    async def stop_health_monitor(self) -> None:
+        self._monitor_running = False
+        if self._health_monitor_task and not self._health_monitor_task.done():
+            try:
+                await asyncio.wait_for(self._health_monitor_task, timeout=3.0)
+            except asyncio.TimeoutError:
+                self._health_monitor_task.cancel()
+        self._health_monitor_task = None
+
     @property
     def embedder(self) -> SentenceTransformer:
         if self._embedder is None:
@@ -82,9 +145,12 @@ class LLMGateway:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{self.settings.ollama_base_url}/api/tags")
                 resp.raise_for_status()
-            logger.info("Ollama health check passed.")
+            self._last_health_ok_at = time.time()
+            self._last_health_error = None
             return True
         except Exception as e:
+            self._last_health_fail_at = time.time()
+            self._last_health_error = str(e)[:200]
             logger.warning("Ollama health check failed: %s", e)
             return False
 

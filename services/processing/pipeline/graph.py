@@ -19,6 +19,23 @@ class PipelineState(TypedDict):
     entry: Optional[MemoryEntry]
 
 
+def _route_after_stage1(state: PipelineState) -> str:
+    """Skip deep extraction when Stage 1 is too unconfident — saves the deep-model
+    pass on noise, filler, or near-empty chunks."""
+    from config.settings import get_settings
+    threshold = get_settings().stage1_confidence_threshold
+    stage1 = state.get("stage1")
+    if stage1 is None or stage1.confidence < threshold:
+        logger.info(
+            "Stage 1 low-confidence (%.2f < %.2f) for chunk %s — skipping Stage 2",
+            stage1.confidence if stage1 else 0.0,
+            threshold,
+            state["chunk"].chunk_id,
+        )
+        return "assemble"
+    return "load_context"
+
+
 def _build_graph():
     from services.processing.pipeline.nodes.fast_classifier import fast_classify
     from services.processing.pipeline.nodes.context_loader import load_context
@@ -34,7 +51,11 @@ def _build_graph():
     g.add_node("write", write)
 
     g.set_entry_point("fast_classify")
-    g.add_edge("fast_classify", "load_context")
+    g.add_conditional_edges(
+        "fast_classify",
+        _route_after_stage1,
+        {"load_context": "load_context", "assemble": "assemble"},
+    )
     g.add_edge("load_context", "deep_extract")
     g.add_edge("deep_extract", "assemble")
     g.add_edge("assemble", "write")

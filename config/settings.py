@@ -26,6 +26,21 @@ class Settings(BaseSettings):
     checkin_threshold: int = Field(default=1, alias="SID_CHECKIN_THRESHOLD")
     checkin_interval_hours: int = Field(default=4, alias="SID_CHECKIN_INTERVAL_HOURS")
 
+    # Pipeline
+    stage1_confidence_threshold: float = Field(
+        default=0.4, alias="SID_STAGE1_CONFIDENCE_THRESHOLD",
+        description="Skip Stage 2 (deep extraction) when Stage 1 confidence is below this."
+    )
+
+    # Ollama health monitoring
+    ollama_healthcheck_interval_secs: int = Field(
+        default=30, alias="SID_OLLAMA_HEALTHCHECK_INTERVAL_SECS"
+    )
+    ollama_stuck_threshold_secs: int = Field(
+        default=120, alias="SID_OLLAMA_STUCK_THRESHOLD_SECS",
+        description="If Ollama has been unhealthy for this long, surface 'stuck' status."
+    )
+
     # Voice
     whisper_model: str = Field(default="base.en", alias="SID_WHISPER_MODEL")
     sample_rate: int = Field(default=16000, alias="SID_SAMPLE_RATE")
