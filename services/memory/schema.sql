@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS extractions (
     due_date TEXT,
     completed_at TEXT,
     parent_id TEXT,
+    milestone_parent_id TEXT,
+    percentage_complete REAL DEFAULT 0,
+    time_estimate_hours REAL,
+    next_step TEXT,
+    closure_note TEXT,
     FOREIGN KEY(thought_id) REFERENCES thoughts(id)
 );
 
@@ -71,6 +76,30 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     latency_ms INTEGER DEFAULT 0,
     estimated_cost_usd REAL DEFAULT 0.0,
     success INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS task_closures (
+    id TEXT PRIMARY KEY,
+    extraction_id TEXT NOT NULL,
+    learning TEXT,
+    what_went_wrong TEXT,
+    would_do_differently TEXT,
+    negligence_flagged INTEGER DEFAULT 0,
+    energy_reflection TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(extraction_id) REFERENCES extractions(id)
+);
+
+CREATE TABLE IF NOT EXISTS weekly_records (
+    week_start TEXT PRIMARY KEY,
+    week_end TEXT NOT NULL,
+    reflection TEXT,
+    planned_tasks INTEGER DEFAULT 0,
+    completed_tasks INTEGER DEFAULT 0,
+    completion_rate REAL,
+    patterns TEXT,
+    key_learning TEXT,
+    created_at TEXT NOT NULL
 );
 
 -- Performance indexes

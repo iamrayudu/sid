@@ -91,6 +91,33 @@ class Extraction(BaseModel):
     due_date: Optional[str] = None
     completed_at: Optional[str] = None
     parent_id: Optional[str] = None
+    # Phase 4 P0 Extended features
+    milestone_parent_id: Optional[str] = None
+    percentage_complete: float = 0.0
+    time_estimate_hours: Optional[float] = None
+    next_step: Optional[str] = None
+    closure_note: Optional[str] = None
+
+class TaskClosure(BaseModel):
+    id: str
+    extraction_id: str
+    learning: Optional[str] = None
+    what_went_wrong: Optional[str] = None
+    would_do_differently: Optional[str] = None
+    negligence_flagged: int = 0
+    energy_reflection: Optional[str] = None
+    created_at: str
+
+class WeeklyRecord(BaseModel):
+    week_start: str
+    week_end: str
+    reflection: str
+    planned_tasks: int = 0
+    completed_tasks: int = 0
+    completion_rate: float = 0.0
+    patterns: Optional[str] = None
+    key_learning: Optional[str] = None
+    created_at: str
 
 
 class Relationship(BaseModel):

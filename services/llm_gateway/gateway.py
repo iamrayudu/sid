@@ -1,8 +1,9 @@
 import time
 import asyncio
 import logging
+import os
 from pathlib import Path
-from typing import Type, TypeVar, List, Dict, Any, Optional
+from typing import Type, TypeVar, List, Dict, Any, Optional, Tuple
 
 import httpx
 import yaml
@@ -20,28 +21,40 @@ T = TypeVar("T", bound=BaseModel)
 
 _MODELS_YAML = Path(__file__).parent.parent.parent / "config" / "models.yaml"
 
-
-def _load_model_map() -> dict:
+def _load_config() -> tuple[dict, dict]:
     try:
         with open(_MODELS_YAML, "r") as f:
-            data = yaml.safe_load(f)
-        return data.get("models", {})
+            content = f.read()
+            content = os.path.expandvars(content)
+            data = yaml.safe_load(content)
+            
+        providers = data.get("providers", {})
+        models = data.get("models", {})
+        
+        detailed_models = {}
+        for k, v in models.items():
+            if isinstance(v, dict):
+                detailed_models[k] = v
+            else:
+                detailed_models[k] = {"model": v, "provider": "local"}
+                
+        return providers, detailed_models
     except Exception as e:
-        logger.warning("Could not load config/models.yaml, using defaults: %s", e)
-        return {}
+        logger.warning(f"Could not load config/models.yaml, using defaults: {e}")
+        return {}, {}
 
 
 _DEFAULT_MODELS = {
-    "stage1": "qwen2.5:3b",
-    "stage2": "qwen2.5:14b",
-    "agent_chat": "qwen2.5:14b",
-    "morning": "qwen2.5:14b",
-    "evening": "qwen2.5:14b",
-    "checkin": "qwen2.5:3b",
-    "weekly": "qwen2.5:14b",
-    "critique": "qwen2.5:14b",
-    "document": "qwen2.5:14b",
-    "milestone": "qwen2.5:14b",
+    "stage1": {"model": "qwen2.5:3b", "provider": "local"},
+    "stage2": {"model": "qwen2.5:14b", "provider": "local"},
+    "agent_chat": {"model": "qwen2.5:14b", "provider": "local"},
+    "morning": {"model": "qwen2.5:14b", "provider": "local"},
+    "evening": {"model": "qwen2.5:14b", "provider": "local"},
+    "checkin": {"model": "qwen2.5:3b", "provider": "local"},
+    "weekly": {"model": "qwen2.5:14b", "provider": "local"},
+    "critique": {"model": "qwen2.5:14b", "provider": "local"},
+    "document": {"model": "qwen2.5:14b", "provider": "local"},
+    "milestone": {"model": "qwen2.5:14b", "provider": "local"},
 }
 
 
@@ -52,13 +65,28 @@ class GatewayError(Exception):
 class LLMGateway:
     def __init__(self):
         self.settings = get_settings()
-        self._model_map: dict = {**_DEFAULT_MODELS, **_load_model_map()}
-
-        self.client = AsyncOpenAI(
-            base_url=f"{self.settings.ollama_base_url}/v1",
-            api_key="ollama",
-            timeout=120.0
-        )
+        
+        raw_providers, loaded_models = _load_config()
+        self._model_map: dict = {**_DEFAULT_MODELS, **loaded_models}
+        
+        self._clients: dict[str, AsyncOpenAI] = {}
+        
+        if "local" not in raw_providers:
+            raw_providers["local"] = {
+                "client": "openai_sdk",
+                "base_url": f"{self.settings.ollama_base_url}/v1",
+                "api_key": "ollama"
+            }
+            
+        for name, p_conf in raw_providers.items():
+            if p_conf.get("client") == "openai_sdk":
+                self._clients[name] = AsyncOpenAI(
+                    base_url=p_conf.get("base_url"),
+                    api_key=p_conf.get("api_key", "default"),
+                    timeout=120.0
+                )
+            else:
+                logger.warning(f"Unsupported client type '{p_conf.get('client')}' for provider '{name}'")
 
         self._embedder: Optional[SentenceTransformer] = None
 
@@ -69,15 +97,29 @@ class LLMGateway:
             self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
         return self._embedder
 
+    def config_for(self, purpose: str) -> Tuple[str, str, AsyncOpenAI]:
+        """Return (model_name, provider_name, client_instance) for a configured purpose."""
+        config = self._model_map.get(purpose)
+        if not config:
+            logger.warning("No config for purpose '%s', falling back to stage2", purpose)
+            config = self._model_map.get("stage2", _DEFAULT_MODELS["stage2"])
+            
+        model = config["model"]
+        provider = config["provider"]
+        client = self._clients.get(provider)
+        
+        if not client:
+            raise GatewayError(f"Provider '{provider}' not configured for purpose '{purpose}'")
+            
+        return model, provider, client
+        
     def model_for(self, purpose: str) -> str:
-        """Return the configured model name for a given purpose."""
-        model = self._model_map.get(purpose)
-        if not model:
-            logger.warning("No model configured for purpose '%s', falling back to stage2", purpose)
-            model = self._model_map.get("stage2", "qwen2.5:14b")
+        """Legacy helper for returning only the active model name string."""
+        model, _, _ = self.config_for(purpose)
         return model
 
     async def health_check(self) -> bool:
+        """Checks the default local provider health."""
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{self.settings.ollama_base_url}/api/tags")
@@ -121,36 +163,37 @@ class LLMGateway:
     # ── Purpose-based entry point (preferred for all agent/routine calls) ──────
 
     async def generate(self, purpose: str, prompt: str, schema: Type[T]) -> T:
-        """Structured call routed by purpose (resolves model from models.yaml)."""
-        model = self.model_for(purpose)
-        return await self._structured_call(model, purpose, prompt, schema)
+        model, _, client = self.config_for(purpose)
+        return await self._structured_call(client, model, purpose, prompt, schema)
 
     async def chat_for(self, purpose: str, messages: List[Dict[str, str]]) -> str:
-        """Free-text chat routed by purpose."""
-        model = self.model_for(purpose)
-        return await self._chat_call(model, purpose, messages)
+        model, _, client = self.config_for(purpose)
+        return await self._chat_call(client, model, purpose, messages)
 
     # ── Legacy helpers kept for pipeline compatibility ─────────────────────────
 
     async def fast(self, prompt: str, schema: Type[T]) -> T:
-        return await self._structured_call(self.model_for("stage1"), "stage1", prompt, schema)
+        model, _, client = self.config_for("stage1")
+        return await self._structured_call(client, model, "stage1", prompt, schema)
 
     async def deep(self, prompt: str, schema: Type[T]) -> T:
-        return await self._structured_call(self.model_for("stage2"), "stage2", prompt, schema)
+        model, _, client = self.config_for("stage2")
+        return await self._structured_call(client, model, "stage2", prompt, schema)
 
     async def chat(self, messages: List[Dict[str, str]], purpose: str = "agent_chat") -> str:
-        return await self._chat_call(self.model_for(purpose), purpose, messages)
+        model, _, client = self.config_for(purpose)
+        return await self._chat_call(client, model, purpose, messages)
 
     # ── Core implementations ───────────────────────────────────────────────────
 
-    async def _chat_call(self, model: str, purpose: str, messages: List[Dict[str, str]]) -> str:
+    async def _chat_call(self, client: AsyncOpenAI, model: str, purpose: str, messages: List[Dict[str, str]]) -> str:
         start_time = time.perf_counter()
         success = True
         prompt_tokens = 0
         completion_tokens = 0
 
         try:
-            response = await self.client.chat.completions.create(
+            response = await client.chat.completions.create(
                 model=model,
                 messages=messages
             )
@@ -161,7 +204,7 @@ class LLMGateway:
             return raw_content
         except Exception as e:
             success = False
-            raise GatewayError(f"Ollama chat call failed [{model}/{purpose}]: {e}")
+            raise GatewayError(f"Gateway chat call failed [{model}/{purpose}]: {e}")
         finally:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             await self._record_call(
@@ -173,14 +216,14 @@ class LLMGateway:
                 success=success
             )
 
-    async def _structured_call(self, model: str, purpose: str, prompt: str, schema: Type[T]) -> T:
+    async def _structured_call(self, client: AsyncOpenAI, model: str, purpose: str, prompt: str, schema: Type[T]) -> T:
         start_time = time.perf_counter()
         success = True
         prompt_tokens = 0
         completion_tokens = 0
 
         try:
-            response = await self.client.chat.completions.create(
+            response = await client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={
@@ -202,7 +245,7 @@ class LLMGateway:
                 return schema.model_validate_json(raw_content)
             except Exception:
                 retry_prompt = f"Respond ONLY with valid JSON matching this schema.\n\n{prompt}"
-                response2 = await self.client.chat.completions.create(
+                response2 = await client.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": retry_prompt}],
                     response_format={
@@ -217,7 +260,7 @@ class LLMGateway:
 
         except Exception as e:
             success = False
-            raise GatewayError(f"Ollama structured call failed [{model}/{purpose}]: {e}")
+            raise GatewayError(f"Gateway structured call failed [{model}/{purpose}]: {e}")
         finally:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             await self._record_call(
@@ -239,7 +282,6 @@ class LLMGateway:
 
 
 _gateway: Optional[LLMGateway] = None
-
 
 def get_gateway() -> LLMGateway:
     global _gateway

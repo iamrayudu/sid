@@ -26,6 +26,19 @@ class DatabaseManager:
             # Synchronous PRAGMA is generally NORMAL in WAL mode
             await db.execute("PRAGMA synchronous=NORMAL;")
             await db.executescript(schema_sql)
+            
+            # P0 Migration: Add extended columns to extractions (idempotently)
+            try:
+                await db.execute("ALTER TABLE extractions ADD COLUMN milestone_parent_id TEXT;")
+                await db.execute("ALTER TABLE extractions ADD COLUMN percentage_complete REAL DEFAULT 0;")
+                await db.execute("ALTER TABLE extractions ADD COLUMN time_estimate_hours REAL;")
+                await db.execute("ALTER TABLE extractions ADD COLUMN next_step TEXT;")
+                await db.execute("ALTER TABLE extractions ADD COLUMN closure_note TEXT;")
+            except aiosqlite.OperationalError as e:
+                # OperationalError: duplicate column name
+                if "duplicate column name" not in str(e).lower():
+                    print(f"Migration warning: {e}")
+            
             await db.commit()
 
     @asynccontextmanager

@@ -5,7 +5,8 @@ import os
 from typing import List, Optional, Dict, Any
 
 from shared.schemas.models import (
-    RawChunk, Thought, Extraction, Relationship, SearchResult, LLMCallRecord, StatsResult
+    RawChunk, Thought, Extraction, Relationship, SearchResult, LLMCallRecord, StatsResult,
+    TaskClosure, WeeklyRecord
 )
 from services.memory.db import get_db_manager
 from services.memory.vector_store import get_vector_store
@@ -97,17 +98,56 @@ class MemoryStore:
             await db.execute(
                 """
                 INSERT INTO extractions (
-                    id, thought_id, type, content, priority, status, due_date, parent_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    id, thought_id, type, content, priority, status, due_date, parent_id,
+                    milestone_parent_id, percentage_complete, time_estimate_hours, next_step, closure_note
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     extraction.id, extraction.thought_id, extraction.type,
                     extraction.content, extraction.priority, extraction.status,
-                    extraction.due_date, extraction.parent_id
+                    extraction.due_date, extraction.parent_id,
+                    extraction.milestone_parent_id, extraction.percentage_complete,
+                    extraction.time_estimate_hours, extraction.next_step, extraction.closure_note
                 )
             )
             await db.commit()
         return extraction.id
+
+    async def save_task_closure(self, closure: TaskClosure) -> str:
+        async with self.db_manager.get_connection() as db:
+            await db.execute(
+                """
+                INSERT INTO task_closures (
+                    id, extraction_id, learning, what_went_wrong, would_do_differently,
+                    negligence_flagged, energy_reflection, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    closure.id, closure.extraction_id, closure.learning, closure.what_went_wrong,
+                    closure.would_do_differently, closure.negligence_flagged,
+                    closure.energy_reflection, closure.created_at
+                )
+            )
+            await db.commit()
+        return closure.id
+
+    async def save_weekly_record(self, record: WeeklyRecord) -> str:
+        async with self.db_manager.get_connection() as db:
+            await db.execute(
+                """
+                INSERT INTO weekly_records (
+                    week_start, week_end, reflection, planned_tasks, completed_tasks,
+                    completion_rate, patterns, key_learning, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.week_start, record.week_end, record.reflection, record.planned_tasks,
+                    record.completed_tasks, record.completion_rate, record.patterns,
+                    record.key_learning, record.created_at
+                )
+            )
+            await db.commit()
+        return record.week_start
 
     async def save_relationship(self, rel: Relationship) -> str:
         async with self.db_manager.get_connection() as db:

@@ -5,42 +5,67 @@
 # All names must match exactly what `ollama list` shows.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PROVIDER CONFIGURATION
+# Define clients for multi-model hybrid routing. api_key can use env vars like ${VAR}.
+# ─────────────────────────────────────────────────────────────────────────────
+providers:
+  local:
+    client: "openai_sdk"
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+  openai:
+    client: "openai_sdk"
+    base_url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"
+  anthropic:
+    client: "anthropic_sdk"
+    api_key: "${ANTHROPIC_API_KEY}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PURPOSE-BASED ROUTING
+# Assign a model and its provider for any specific task.
+# ─────────────────────────────────────────────────────────────────────────────
 models:
-  # Stage 1: fast classification + text cleaning. Speed > depth.
-  # Alternatives: gemma3:4b, llama3.2:3b
-  stage1: qwen2.5:3b
+  stage1: 
+    model: "qwen2.5:3b"
+    provider: "local"
+    
+  stage2: 
+    model: "qwen2.5:14b"
+    provider: "local"
+    
+  agent_chat: 
+    model: "qwen2.5:14b"
+    provider: "local"
+    
+  morning: 
+    model: "qwen2.5:14b"
+    provider: "local"
+    
+  evening: 
+    model: "qwen2.5:14b"
+    provider: "local"
+    
+  checkin: 
+    model: "qwen2.5:3b"
+    provider: "local"
+    
+  weekly: 
+    model: "qwen2.5:14b"
+    provider: "local"
 
-  # Stage 2: deep extraction — tasks, entities, relationships, intent.
-  # Alternatives: gemma3:12b, phi4:14b, qwen2.5:32b
-  stage2: qwen2.5:14b
-
-  # Conversational reasoning over memory. Interrogation mode (5-20 questions).
-  # Alternatives: phi4:14b, gemma3:27b
-  agent_chat: qwen2.5:14b
-
-  # Morning brief: structured day plan + narrative from pending + yesterday.
-  morning: qwen2.5:14b
-
-  # Evening reflection: journal narrative + task completion analysis.
-  evening: qwen2.5:14b
-
-  # 4-hour check-in: brief status question. Must be fast.
-  checkin: qwen2.5:3b
-
-  # Weekly review: deep behavioral autopsy. Use strongest available model.
-  # Alternatives: phi4:14b (best for reasoning), gemma3:27b, qwen2.5:32b
-  weekly: qwen2.5:14b
-
-  # Critique engine: behavioral profiling, negligence detection.
-  # phi4:14b is exceptional at analytical/critical reasoning.
-  critique: qwen2.5:14b
-
-  # Document agent: reading comprehension + extraction from PDF/text/markdown.
-  # Alternatives: gemma3:12b (excellent at document understanding)
-  document: qwen2.5:14b
-
-  # Milestone planning: breaks tasks into steps via conversation.
-  milestone: qwen2.5:14b
+  critique: 
+    model: "qwen2.5:14b"
+    provider: "local"
+    
+  document: 
+    model: "qwen2.5:14b"
+    provider: "local"
+    
+  milestone: 
+    model: "qwen2.5:14b"
+    provider: "local"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Embedding model — sentence-transformers, runs locally on CPU. NOT Ollama.
@@ -48,11 +73,6 @@ models:
 # If changed: delete ~/.sid/vectors/ and let SID rebuild on next startup.
 # ─────────────────────────────────────────────────────────────────────────────
 embedding: all-MiniLM-L6-v2
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Ollama connection
-# ─────────────────────────────────────────────────────────────────────────────
-ollama_base_url: http://localhost:11434
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Whisper STT model (trade speed vs accuracy)
