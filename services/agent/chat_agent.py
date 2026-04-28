@@ -68,6 +68,34 @@ async def _tool_get_today() -> str:
         return f"Timeline retrieval failed: {e}"
 
 
+async def _tool_plan_task(task_id: str, context: str = "") -> str:
+    """Break a pending parent task into concrete milestones.
+
+    The chat agent uses this when the user says things like "plan the X task"
+    or "help me break this down". Returns a human-readable summary of the
+    saved milestones; the UI separately renders them via /api/agent/milestones.
+    """
+    try:
+        from services.agent.routines.milestone import plan_and_persist
+        store = get_store()
+        parent = await store.get_extraction(task_id)
+        if parent is None:
+            return f"No task found with id {task_id}."
+        if parent.status == "done":
+            return f"Task {task_id} is already done — nothing to plan."
+
+        saved = await plan_and_persist(parent, user_context=context)
+        lines = [f"Planned {len(saved)} milestone(s) for: {parent.content}"]
+        for i, m in enumerate(saved, 1):
+            est = f" (~{m.time_estimate_hours}h)" if m.time_estimate_hours else ""
+            lines.append(f"  {i}. [P{m.priority}] {m.content}{est}")
+            if m.next_step:
+                lines.append(f"     next: {m.next_step}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Milestone planning failed: {e}"
+
+
 async def _tool_get_date(date: str) -> str:
     """Get thoughts from a specific date (YYYY-MM-DD)."""
     try:
@@ -101,6 +129,8 @@ Available tools:
 - get_pending_tasks(): all open tasks
 - get_today(): today's timeline
 - get_date(date): a specific day's thoughts
+- plan_task(task_id, context?): break a parent task into 2-7 concrete milestones
+  (use when Sudheer asks to plan, break down, or scope a specific task)
 
 INTERROGATION MODE:
 When a question is broad, vague, or could have many interpretations — ask 2-5 sharp
@@ -118,6 +148,7 @@ _TOOLS = {
     "get_pending_tasks": lambda args: _tool_get_pending_tasks(),
     "get_today": lambda args: _tool_get_today(),
     "get_date": lambda args: _tool_get_date(args.get("date", datetime.date.today().isoformat())),
+    "plan_task": lambda args: _tool_plan_task(args.get("task_id", ""), args.get("context", "")),
 }
 
 _TOOL_SCHEMAS = [
@@ -158,6 +189,37 @@ _TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {"date": {"type": "string", "description": "Date in YYYY-MM-DD format"}},
                 "required": ["date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "plan_task",
+            "description": (
+                "Break a pending parent task into 2-7 concrete milestones. "
+                "Use when the user asks to plan, break down, or scope out a task. "
+                "Re-running on the same task adds new steps without duplicating existing ones."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": (
+                            "The parent extraction id to break down. Get this from "
+                            "get_pending_tasks first if you don't have it."
+                        ),
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": (
+                            "Optional free text from the user about constraints, "
+                            "energy level, available time. Pass through verbatim."
+                        ),
+                    },
+                },
+                "required": ["task_id"],
             },
         },
     },

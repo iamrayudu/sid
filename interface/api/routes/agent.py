@@ -178,6 +178,85 @@ async def tasks():
     }
 
 
+class MilestoneRequest(BaseModel):
+    task_id: str
+    context: Optional[str] = ""
+
+
+class MilestoneResponse(BaseModel):
+    parent_id: str
+    rationale: str
+    saved_milestones: List[dict]
+    skipped_existing: int
+
+
+@router.post("/milestone", response_model=MilestoneResponse)
+async def milestone(body: MilestoneRequest) -> MilestoneResponse:
+    """Break a parent task into 2-7 concrete milestones via the LLM.
+
+    Re-running on the same task adds new steps without duplicating existing
+    ones (the prompt sees existing milestones).
+    """
+    from services.memory import get_store
+    from services.agent.routines.milestone import plan_and_persist
+    store = get_store()
+
+    parent = await store.get_extraction(body.task_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail=f"Task {body.task_id} not found")
+    if parent.status == "done":
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot plan milestones for a completed task",
+        )
+
+    existing_before = await store.get_milestones_for(parent.id)
+    try:
+        saved = await plan_and_persist(parent, user_context=body.context or "")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Milestone generation failed: {e}")
+
+    return MilestoneResponse(
+        parent_id=parent.id,
+        rationale="Milestones planned. See saved_milestones for details.",
+        saved_milestones=[
+            {
+                "id": s.id,
+                "content": s.content,
+                "priority": s.priority,
+                "status": s.status,
+                "milestone_parent_id": s.milestone_parent_id,
+                "time_estimate_hours": s.time_estimate_hours,
+                "next_step": s.next_step,
+            }
+            for s in saved
+        ],
+        skipped_existing=len(existing_before),
+    )
+
+
+@router.get("/milestones/{parent_id}")
+async def list_milestones(parent_id: str):
+    """List child milestones for a parent task (used by UI to render hierarchy)."""
+    from services.memory import get_store
+    children = await get_store().get_milestones_for(parent_id)
+    return {
+        "parent_id": parent_id,
+        "milestones": [
+            {
+                "id": c.id,
+                "content": c.content,
+                "priority": c.priority,
+                "status": c.status,
+                "next_step": c.next_step,
+                "time_estimate_hours": c.time_estimate_hours,
+                "percentage_complete": c.percentage_complete,
+            }
+            for c in children
+        ],
+    }
+
+
 @router.get("/recap")
 async def recap(hours: int = 4):
     """LLM summary of the last N hours of thoughts."""

@@ -257,6 +257,73 @@
   .failed-actions .retry:hover { color: var(--accent); border-color: var(--accent); }
   .failed-actions .drop:hover  { color: var(--danger); border-color: var(--danger); }
 
+  /* --- TASK PLAN BUTTON + MILESTONE INDENT --------------------------------- */
+  .task-item.is-child {
+    padding-left: 22px;
+    border-left: 2px solid var(--border);
+    margin-left: 6px;
+    background: rgba(122,162,255,0.04);
+  }
+  .plan-btn {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 11px;
+    cursor: pointer;
+    margin-top: 2px;
+  }
+  .plan-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .plan-btn:disabled { opacity: 0.5; cursor: default; }
+
+  /* --- MODAL --------------------------------------------------------------- */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 20px;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    width: 100%;
+    max-width: 540px;
+    max-height: 86vh;
+    overflow-y: auto;
+  }
+  .modal h3 { margin: 0 0 4px; font-size: 14px; }
+  .modal .parent-task {
+    font-size: 13px; color: var(--muted); margin-bottom: 14px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  }
+  .modal label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; display: block; margin-bottom: 6px; }
+  .modal textarea {
+    width: 100%; padding: 10px 12px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 13px;
+    resize: vertical; min-height: 70px;
+  }
+  .modal textarea:focus { border-color: var(--accent); outline: none; }
+  .modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+  .modal button {
+    padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: transparent; color: var(--text); font-size: 13px; cursor: pointer;
+  }
+  .modal button.primary { background: var(--accent); color: #0e0f12; border-color: var(--accent); font-weight: 600; }
+  .modal button:disabled { opacity: 0.5; cursor: default; }
+  .modal .breakdown { margin-top: 14px; font-size: 13px; }
+  .modal .breakdown h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; }
+  .modal .step { padding: 8px 10px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 6px; }
+  .modal .step .head { font-weight: 500; }
+  .modal .step .sub { color: var(--muted); font-size: 11px; margin-top: 3px; }
+
   .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
 
   footer {
@@ -323,6 +390,21 @@
     <div id="timeline"><div class="empty">No thoughts yet today.</div></div>
   </div>
 </main>
+
+<!-- PLAN MODAL -->
+<div class="modal-backdrop" id="planModal">
+  <div class="modal" role="dialog" aria-labelledby="planTitle">
+    <h3 id="planTitle">Plan task</h3>
+    <div class="parent-task" id="planParent">—</div>
+    <label for="planContext">Context (optional — energy, time, constraints)</label>
+    <textarea id="planContext" placeholder="e.g. 'I have 2 hours after dinner; this is blocked on docs from Aaron.'"></textarea>
+    <div class="actions">
+      <button id="planCancel">Cancel</button>
+      <button id="planSubmit" class="primary">Plan</button>
+    </div>
+    <div class="breakdown" id="planResult"></div>
+  </div>
+</div>
 
 <footer id="statsFooter">Today: — thoughts | LLM calls: —</footer>
 
@@ -409,18 +491,33 @@ async function loadTasks() {
       taskList.innerHTML = '<div class="empty">No pending tasks.</div>';
       return;
     }
-    taskList.innerHTML = tasks.map(t => `
-      <div class="task-item" id="task-${escapeHtml(t.id)}">
+    // Top-level tasks (no milestone parent) come first; their child milestones
+    // render indented underneath.
+    const byParent = {};
+    const roots = [];
+    for (const t of tasks) {
+      if (t.milestone_parent_id) {
+        (byParent[t.milestone_parent_id] = byParent[t.milestone_parent_id] || []).push(t);
+      } else {
+        roots.push(t);
+      }
+    }
+    const renderRow = (t, isChild = false) => `
+      <div class="task-item${isChild ? ' is-child' : ''}" id="task-${escapeHtml(t.id)}">
         <div class="priority-dot pri-${t.priority || 3}"></div>
         <input type="checkbox" onchange="markDone('${escapeHtml(t.id)}', '${escapeHtml(t.thought_id)}')" />
         <div class="task-content">
           <span>${escapeHtml(t.content)}</span>
           <span class="task-meta">
-            p${t.priority || 3}${t.due_date ? ' · due ' + escapeHtml(t.due_date) : ''}${t.next_step ? ' · next: ' + escapeHtml(t.next_step) : ''}
+            p${t.priority || 3}${t.due_date ? ' · due ' + escapeHtml(t.due_date) : ''}${t.time_estimate_hours ? ' · ~' + t.time_estimate_hours + 'h' : ''}${t.next_step ? ' · next: ' + escapeHtml(t.next_step) : ''}
           </span>
         </div>
+        ${isChild ? '' : `<button class="plan-btn" onclick="openPlanModal('${escapeHtml(t.id)}', '${escapeHtml(t.content).replace(/'/g, "\\'")}')">Plan</button>`}
       </div>
-    `).join("");
+    `;
+    taskList.innerHTML = roots.map(t =>
+      renderRow(t) + (byParent[t.id] || []).map(c => renderRow(c, true)).join("")
+    ).join("");
   } catch (e) {
     taskList.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
   }
@@ -644,6 +741,69 @@ async function dropFailed(id) {
     loadFailed();
   } catch (e) { alert("Drop failed: " + e.message); }
 }
+
+// ── Plan modal (B1: milestone routine) ───────────────────────────────────────
+const planModal   = document.getElementById("planModal");
+const planParent  = document.getElementById("planParent");
+const planContext = document.getElementById("planContext");
+const planSubmit  = document.getElementById("planSubmit");
+const planCancel  = document.getElementById("planCancel");
+const planResult  = document.getElementById("planResult");
+let planTaskId = null;
+
+function openPlanModal(id, content) {
+  planTaskId = id;
+  planParent.textContent = content;
+  planContext.value = "";
+  planResult.innerHTML = "";
+  planSubmit.disabled = false;
+  planSubmit.textContent = "Plan";
+  planModal.classList.add("show");
+  setTimeout(() => planContext.focus(), 50);
+}
+
+function closePlanModal() {
+  planModal.classList.remove("show");
+  planTaskId = null;
+}
+
+planCancel.addEventListener("click", closePlanModal);
+planModal.addEventListener("click", e => {
+  if (e.target === planModal) closePlanModal();
+});
+
+planSubmit.addEventListener("click", async () => {
+  if (!planTaskId) return;
+  planSubmit.disabled = true;
+  planSubmit.textContent = "Planning…";
+  planResult.innerHTML = '<div class="empty" style="padding:8px 0;color:var(--muted);font-size:12px;">Asking SID to break this down…</div>';
+  try {
+    const r = await api("/api/agent/milestone", {
+      method: "POST",
+      body: JSON.stringify({ task_id: planTaskId, context: planContext.value.trim() }),
+    });
+    const steps = r.saved_milestones || [];
+    if (!steps.length) {
+      planResult.innerHTML = '<div class="empty" style="padding:8px 0;">No steps returned.</div>';
+    } else {
+      planResult.innerHTML =
+        '<h4>Saved milestones</h4>' +
+        steps.map(s => `
+          <div class="step">
+            <div class="head">[P${s.priority}] ${escapeHtml(s.content)}${s.time_estimate_hours ? ' · ~'+s.time_estimate_hours+'h' : ''}</div>
+            ${s.next_step ? `<div class="sub">next: ${escapeHtml(s.next_step)}</div>` : ''}
+          </div>
+        `).join("");
+    }
+    planSubmit.textContent = "Done";
+    loadTasks();
+    setTimeout(closePlanModal, 1800);
+  } catch (e) {
+    planResult.innerHTML = `<div class="err" style="color:var(--danger);font-size:12px;padding:8px 0;">${escapeHtml(e.message)}</div>`;
+    planSubmit.disabled = false;
+    planSubmit.textContent = "Retry";
+  }
+});
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadTimeline();

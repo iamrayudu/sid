@@ -98,17 +98,46 @@ class MemoryStore:
             await db.execute(
                 """
                 INSERT INTO extractions (
-                    id, thought_id, type, content, priority, status, due_date, parent_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    id, thought_id, type, content, priority, status, due_date, parent_id,
+                    milestone_parent_id, percentage_complete, time_estimate_hours,
+                    next_step, closure_note
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     extraction.id, extraction.thought_id, extraction.type,
                     extraction.content, extraction.priority, extraction.status,
-                    extraction.due_date, extraction.parent_id
+                    extraction.due_date, extraction.parent_id,
+                    extraction.milestone_parent_id, extraction.percentage_complete,
+                    extraction.time_estimate_hours, extraction.next_step,
+                    extraction.closure_note,
                 )
             )
             await db.commit()
         return extraction.id
+
+    async def get_extraction(self, extraction_id: str) -> Optional[Extraction]:
+        async with self.db_manager.get_connection() as db:
+            cursor = await db.execute(
+                "SELECT * FROM extractions WHERE id = ?", (extraction_id,)
+            )
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            return Extraction(**dict(row))
+
+    async def get_milestones_for(self, parent_id: str) -> List[Extraction]:
+        """Return all child milestones of the given parent extraction (in priority order)."""
+        async with self.db_manager.get_connection() as db:
+            cursor = await db.execute(
+                """
+                SELECT * FROM extractions
+                WHERE milestone_parent_id = ?
+                ORDER BY priority ASC, id ASC
+                """,
+                (parent_id,),
+            )
+            rows = await cursor.fetchall()
+            return [Extraction(**dict(r)) for r in rows]
 
     async def save_relationship(self, rel: Relationship) -> str:
         async with self.db_manager.get_connection() as db:
