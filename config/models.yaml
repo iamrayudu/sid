@@ -10,17 +10,34 @@
 # Define clients for multi-model hybrid routing. api_key can use env vars like ${VAR}.
 # ─────────────────────────────────────────────────────────────────────────────
 providers:
+  # ── Local Ollama (always enabled, zero cost) ─────────────────────────────
   local:
     client: "openai_sdk"
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
+    native_json_schema: true
+    enabled: true
+
+  # ── OpenAI (opt-in: set enabled: true + export OPENAI_API_KEY) ──────────
   openai:
     client: "openai_sdk"
     base_url: "https://api.openai.com/v1"
     api_key: "${OPENAI_API_KEY}"
+    native_json_schema: true
+    enabled: false
+
+  # ── Anthropic via OpenAI-compatible endpoint (opt-in) ───────────────────
+  # Use for: claude-opus-4-7 on weekly/critique for best reasoning quality.
+  # Set enabled: true + export ANTHROPIC_API_KEY before starting SID.
+  # NOTE: native_json_schema: false → gateway uses prompt-based JSON extraction.
   anthropic:
-    client: "anthropic_sdk"
+    client: "openai_sdk"
+    base_url: "https://api.anthropic.com/v1"
     api_key: "${ANTHROPIC_API_KEY}"
+    native_json_schema: false
+    enabled: false
+    extra_headers:
+      anthropic-version: "2023-06-01"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PURPOSE-BASED ROUTING

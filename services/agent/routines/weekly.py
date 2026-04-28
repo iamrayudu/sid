@@ -105,19 +105,20 @@ Rules:
     try:
         review = await gateway.chat_for("weekly", [{"role": "user", "content": prompt}])
         logger.info("Weekly review generated (%d thoughts across %d days)", total_count, len(thoughts_by_day))
-        
+
         from shared.schemas.models import WeeklyRecord
+        weekly_stats = await store.get_weekly_stats(week_start, week_end)
         record = WeeklyRecord(
             week_start=week_start,
             week_end=week_end,
             reflection=review,
-            planned_tasks=len(pending_tasks),
-            completed_tasks=0, # TODO: implement exact completed extraction count lookup
-            completion_rate=0.0,
+            planned_tasks=weekly_stats["planned"],
+            completed_tasks=weekly_stats["completed"],
+            completion_rate=weekly_stats["completion_rate"],
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
         )
         await store.save_weekly_record(record)
-        
+
         return review
     except Exception as e:
         logger.error("Weekly review failed: %s", e)

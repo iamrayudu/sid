@@ -135,7 +135,7 @@ class MemoryStore:
         async with self.db_manager.get_connection() as db:
             await db.execute(
                 """
-                INSERT INTO weekly_records (
+                INSERT OR REPLACE INTO weekly_records (
                     week_start, week_end, reflection, planned_tasks, completed_tasks,
                     completion_rate, patterns, key_learning, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -148,6 +148,41 @@ class MemoryStore:
             )
             await db.commit()
         return record.week_start
+
+    async def get_weekly_stats(self, week_start: str, week_end: str) -> dict:
+        """Return planned/completed task counts for a week range.
+
+        planned  = tasks whose thought was captured during the week
+        completed = tasks closed (status='done') with completed_at in the week
+        """
+        async with self.db_manager.get_connection() as db:
+            # Tasks extracted from thoughts captured this week
+            cur = await db.execute(
+                """
+                SELECT COUNT(*) AS c FROM extractions e
+                JOIN thoughts t ON e.thought_id = t.id
+                WHERE e.type = 'task'
+                  AND DATE(t.created_at) BETWEEN ? AND ?
+                """,
+                (week_start, week_end),
+            )
+            row = await cur.fetchone()
+            planned = int(row["c"]) if row else 0
+
+            # Tasks completed within this week
+            cur = await db.execute(
+                """
+                SELECT COUNT(*) AS c FROM extractions
+                WHERE status = 'done'
+                  AND DATE(completed_at) BETWEEN ? AND ?
+                """,
+                (week_start, week_end),
+            )
+            row = await cur.fetchone()
+            completed = int(row["c"]) if row else 0
+
+        rate = round(completed / planned, 3) if planned > 0 else 0.0
+        return {"planned": planned, "completed": completed, "completion_rate": rate}
 
     async def save_relationship(self, rel: Relationship) -> str:
         async with self.db_manager.get_connection() as db:
@@ -287,28 +322,26 @@ class MemoryStore:
             row = await cur.fetchone()
             llm_calls_today = int(row["c"]) if row else 0
 
+            # Aggregate tokens by purpose (stage1=fast, stage2=deep) — model-name agnostic
             cur = await db.execute(
                 """
-                SELECT model,
-                       COALESCE(SUM(prompt_tokens), 0) AS p,
-                       COALESCE(SUM(completion_tokens), 0) AS c
+                SELECT purpose,
+                       COALESCE(SUM(prompt_tokens), 0) + COALESCE(SUM(completion_tokens), 0) AS total
                 FROM llm_calls
                 WHERE DATE(timestamp) = ?
-                GROUP BY model
+                  AND purpose IN ('stage1', 'stage2')
+                GROUP BY purpose
                 """,
                 (today,),
             )
-            model_rows = await cur.fetchall()
-
-            settings = self._get_settings()
+            purpose_rows = await cur.fetchall()
             tokens_today_fast = 0
             tokens_today_deep = 0
-            for r in model_rows:
-                tokens = int(r["p"]) + int(r["c"])
-                if r["model"] == settings.fast_model:
-                    tokens_today_fast += tokens
-                elif r["model"] == settings.deep_model:
-                    tokens_today_deep += tokens
+            for r in purpose_rows:
+                if r["purpose"] == "stage1":
+                    tokens_today_fast = int(r["total"])
+                elif r["purpose"] == "stage2":
+                    tokens_today_deep = int(r["total"])
 
             cur = await db.execute(
                 "SELECT AVG(latency_ms) AS a FROM llm_calls WHERE purpose = 'stage1'"

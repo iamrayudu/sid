@@ -27,20 +27,20 @@ def _load_config() -> tuple[dict, dict]:
             content = f.read()
             content = os.path.expandvars(content)
             data = yaml.safe_load(content)
-            
+
         providers = data.get("providers", {})
         models = data.get("models", {})
-        
+
         detailed_models = {}
         for k, v in models.items():
             if isinstance(v, dict):
                 detailed_models[k] = v
             else:
                 detailed_models[k] = {"model": v, "provider": "local"}
-                
+
         return providers, detailed_models
     except Exception as e:
-        logger.warning(f"Could not load config/models.yaml, using defaults: {e}")
+        logger.warning("Could not load config/models.yaml, using defaults: %s", e)
         return {}, {}
 
 
@@ -68,25 +68,45 @@ class LLMGateway:
         
         raw_providers, loaded_models = _load_config()
         self._model_map: dict = {**_DEFAULT_MODELS, **loaded_models}
-        
+
+        # Store full provider configs so _structured_call can check capabilities
+        self._provider_configs: dict[str, dict] = {}
         self._clients: dict[str, AsyncOpenAI] = {}
-        
+
         if "local" not in raw_providers:
             raw_providers["local"] = {
                 "client": "openai_sdk",
                 "base_url": f"{self.settings.ollama_base_url}/v1",
-                "api_key": "ollama"
+                "api_key": "ollama",
+                "native_json_schema": True,
             }
-            
+
         for name, p_conf in raw_providers.items():
-            if p_conf.get("client") == "openai_sdk":
-                self._clients[name] = AsyncOpenAI(
-                    base_url=p_conf.get("base_url"),
-                    api_key=p_conf.get("api_key", "default"),
-                    timeout=120.0
-                )
+            # Skip providers explicitly disabled
+            if not p_conf.get("enabled", True):
+                logger.debug("Provider '%s' is disabled (enabled: false) — skipping", name)
+                continue
+
+            client_type = p_conf.get("client", "openai_sdk")
+            if client_type == "openai_sdk":
+                api_key = p_conf.get("api_key", "default")
+                extra_headers = p_conf.get("extra_headers", {})
+                try:
+                    self._clients[name] = AsyncOpenAI(
+                        base_url=p_conf.get("base_url"),
+                        api_key=api_key,
+                        timeout=120.0,
+                        default_headers=extra_headers if extra_headers else None,
+                    )
+                    self._provider_configs[name] = p_conf
+                except Exception as e:
+                    logger.error("Failed to initialise provider '%s': %s", name, e)
             else:
-                logger.warning(f"Unsupported client type '{p_conf.get('client')}' for provider '{name}'")
+                logger.warning(
+                    "Provider '%s' uses unsupported client type '%s' — skipping. "
+                    "Only 'openai_sdk' is supported (covers Ollama, OpenAI, Anthropic v1).",
+                    name, client_type,
+                )
 
         self._embedder: Optional[SentenceTransformer] = None
 
@@ -103,15 +123,30 @@ class LLMGateway:
         if not config:
             logger.warning("No config for purpose '%s', falling back to stage2", purpose)
             config = self._model_map.get("stage2", _DEFAULT_MODELS["stage2"])
-            
+
         model = config["model"]
         provider = config["provider"]
         client = self._clients.get(provider)
-        
+
         if not client:
-            raise GatewayError(f"Provider '{provider}' not configured for purpose '{purpose}'")
-            
+            # Fall back to local if the intended provider isn't available
+            local_client = self._clients.get("local")
+            if local_client:
+                logger.warning(
+                    "Provider '%s' not available for purpose '%s' — falling back to local.",
+                    provider, purpose,
+                )
+                return self._model_map["stage2"]["model"], "local", local_client
+            raise GatewayError(
+                f"Provider '{provider}' not available for purpose '{purpose}' and no local fallback."
+            )
+
         return model, provider, client
+
+    def _supports_json_schema(self, provider: str) -> bool:
+        """True if the provider natively supports response_format.json_schema."""
+        p_conf = self._provider_configs.get(provider, {})
+        return p_conf.get("native_json_schema", True)
         
     def model_for(self, purpose: str) -> str:
         """Legacy helper for returning only the active model name string."""
@@ -222,19 +257,29 @@ class LLMGateway:
         prompt_tokens = 0
         completion_tokens = 0
 
-        try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": schema.__name__,
-                        "schema": schema.model_json_schema()
-                    }
-                }
-            )
+        # Determine which provider owns this client and check its capabilities
+        provider = next((n for n, c in self._clients.items() if c is client), "local")
+        use_json_schema = self._supports_json_schema(provider)
 
+        schema_json = schema.model_json_schema()
+
+        def _build_request(content: str) -> dict:
+            req: dict = {"model": model, "messages": [{"role": "user", "content": content}]}
+            if use_json_schema:
+                req["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": schema.__name__, "schema": schema_json},
+                }
+            else:
+                # Prompt-based JSON extraction for providers without native schema support
+                req["messages"][0]["content"] = (
+                    f"Respond ONLY with a valid JSON object matching this schema:\n"
+                    f"{schema_json}\n\n{content}"
+                )
+            return req
+
+        try:
+            response = await client.chat.completions.create(**_build_request(prompt))
             raw_content = response.choices[0].message.content
 
             if response.usage:
@@ -245,17 +290,7 @@ class LLMGateway:
                 return schema.model_validate_json(raw_content)
             except Exception:
                 retry_prompt = f"Respond ONLY with valid JSON matching this schema.\n\n{prompt}"
-                response2 = await client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": retry_prompt}],
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": schema.__name__,
-                            "schema": schema.model_json_schema()
-                        }
-                    }
-                )
+                response2 = await client.chat.completions.create(**_build_request(retry_prompt))
                 return schema.model_validate_json(response2.choices[0].message.content)
 
         except Exception as e:

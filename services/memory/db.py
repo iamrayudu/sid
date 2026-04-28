@@ -27,17 +27,20 @@ class DatabaseManager:
             await db.execute("PRAGMA synchronous=NORMAL;")
             await db.executescript(schema_sql)
             
-            # P0 Migration: Add extended columns to extractions (idempotently)
-            try:
-                await db.execute("ALTER TABLE extractions ADD COLUMN milestone_parent_id TEXT;")
-                await db.execute("ALTER TABLE extractions ADD COLUMN percentage_complete REAL DEFAULT 0;")
-                await db.execute("ALTER TABLE extractions ADD COLUMN time_estimate_hours REAL;")
-                await db.execute("ALTER TABLE extractions ADD COLUMN next_step TEXT;")
-                await db.execute("ALTER TABLE extractions ADD COLUMN closure_note TEXT;")
-            except aiosqlite.OperationalError as e:
-                # OperationalError: duplicate column name
-                if "duplicate column name" not in str(e).lower():
-                    print(f"Migration warning: {e}")
+            # P0 Migration: each ALTER is wrapped individually so a partially-migrated
+            # DB always finishes — one column existing doesn't skip the rest.
+            _column_migrations = [
+                "ALTER TABLE extractions ADD COLUMN milestone_parent_id TEXT",
+                "ALTER TABLE extractions ADD COLUMN percentage_complete REAL DEFAULT 0",
+                "ALTER TABLE extractions ADD COLUMN time_estimate_hours REAL",
+                "ALTER TABLE extractions ADD COLUMN next_step TEXT",
+                "ALTER TABLE extractions ADD COLUMN closure_note TEXT",
+            ]
+            for _stmt in _column_migrations:
+                try:
+                    await db.execute(_stmt)
+                except aiosqlite.OperationalError:
+                    pass  # column already exists on this DB — safe to skip
             
             await db.commit()
 
