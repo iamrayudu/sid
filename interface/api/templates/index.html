@@ -178,6 +178,25 @@
     white-space: nowrap;
   }
   #chatSend:disabled { background: var(--border); color: var(--muted); cursor: default; }
+  #chatMic {
+    padding: 9px 12px;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 80ms;
+  }
+  #chatMic:hover { color: var(--text); border-color: var(--accent); }
+  #chatMic.holding {
+    background: var(--danger);
+    color: #0e0f12;
+    border-color: var(--danger);
+    animation: pulse 1s infinite;
+  }
+  #chatMic:disabled { opacity: 0.4; cursor: default; }
 
   /* --- TIMELINE ------------------------------------------------------------- */
   .thought {
@@ -365,8 +384,12 @@
       </h2>
       <div id="chatMessages"></div>
       <div class="chat-row">
-        <textarea id="chatInput" rows="2" placeholder="Ask SID anything..."></textarea>
+        <textarea id="chatInput" rows="2" placeholder="Ask SID anything... (or press-and-hold the mic to reply by voice)"></textarea>
+        <button id="chatMic" title="Press and hold to reply by voice">🎙</button>
         <button id="chatSend">Send</button>
+      </div>
+      <div id="chatReplyHint" style="display:none;font-size:11px;color:var(--danger);margin-top:6px;">
+        Recording reply… release to send
       </div>
     </div>
 
@@ -793,6 +816,84 @@ async function dropFailed(id) {
     loadFailed();
   } catch (e) { alert("Drop failed: " + e.message); }
 }
+
+// ── Press-hold voice reply (B5) ──────────────────────────────────────────────
+//
+// Tap on the main RECORD button = new thought (existing /voice/start + /stop).
+// Press-and-hold on the mic button next to the chat input = REPLY: same audio
+// path, but transcript routes to the chat agent instead of the thoughts table.
+const chatMic       = document.getElementById("chatMic");
+const chatReplyHint = document.getElementById("chatReplyHint");
+
+let replyHolding = false;
+let replySessionId = null;
+
+async function startReply(e) {
+  if (e) e.preventDefault();
+  if (replyHolding || recording) return;  // can't reply while normal capture is active
+  try {
+    const r = await api("/api/voice/start", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    replySessionId = r.session_id;
+    replyHolding = true;
+    chatMic.classList.add("holding");
+    chatReplyHint.style.display = "";
+    chatSend.disabled = true;
+  } catch (err) {
+    appendMsg("sid", "Could not start reply: " + err.message);
+  }
+}
+
+async function endReply(e) {
+  if (e) e.preventDefault();
+  if (!replyHolding) return;
+  replyHolding = false;
+  chatMic.classList.remove("holding");
+  chatReplyHint.style.display = "none";
+  chatSend.disabled = false;
+
+  const sid = replySessionId;
+  replySessionId = null;
+  if (!sid) return;
+
+  const thinking = appendMsg("sid thinking", "transcribing reply…");
+  try {
+    const r = await api("/api/voice/reply", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sid, history: chatHistory }),
+    });
+    thinking.remove();
+    if (r.transcript) {
+      appendMsg("user", r.transcript);
+      chatHistory.push({ role: "user", content: r.transcript });
+    }
+    if (r.chat_response) {
+      appendMsg("sid", r.chat_response);
+      chatHistory.push({ role: "assistant", content: r.chat_response });
+    }
+    if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);
+    renderChatMode(r);
+  } catch (err) {
+    thinking.remove();
+    // 204 means VAD trimmed all silence — just no-op silently.
+    if (!String(err.message).includes("204")) {
+      appendMsg("sid", "Reply failed: " + err.message);
+    }
+  }
+}
+
+// Mouse + touch + keyboard cancellation safety
+chatMic.addEventListener("mousedown",  startReply);
+chatMic.addEventListener("mouseup",    endReply);
+chatMic.addEventListener("mouseleave", () => { if (replyHolding) endReply(); });
+chatMic.addEventListener("touchstart", startReply, { passive: false });
+chatMic.addEventListener("touchend",   endReply,   { passive: false });
+window.addEventListener("blur",        () => { if (replyHolding) endReply(); });
+// Click is a no-op (we use mousedown/up). Prevent default on click so it
+// doesn't fire submit-style behaviors.
+chatMic.addEventListener("click", e => e.preventDefault());
 
 // ── Closure modal (B2: task closure flow) ────────────────────────────────────
 const closureModal      = document.getElementById("closureModal");

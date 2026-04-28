@@ -134,3 +134,99 @@ async def status() -> StatusResponse:
         session_id=_current_session_id,
         queue_depth=await _queue_depth(),
     )
+
+
+# ── B5: press-hold reply routing ──────────────────────────────────────────────
+#
+# Tap on the main RECORD button creates a fresh RawChunk via /voice/start +
+# /voice/stop (existing flow). Press-and-hold on the chat input is a REPLY:
+# the audio is transcribed but NOT saved to thoughts. Instead the transcript
+# is fed to the chat agent as a user message, with the chat history the
+# client maintains.
+#
+# Both flows share the same mic and the _recording flag — the user can only
+# do one at a time, which is correct (single mic, single attention).
+
+
+class ReplyRequest(BaseModel):
+    session_id: str
+    history: Optional[list] = None  # list[{"role","content"}] from the client's chat history
+
+
+class ReplyResponse(BaseModel):
+    transcript: str
+    duration_sec: float
+    chat_response: str
+    tools_used: list
+    took_ms: int
+    question_count: int = 0
+    mode: str = "answering"
+    min_questions: int = 0
+    bypassed: bool = False
+
+
+@router.post("/reply", response_model=ReplyResponse)
+async def reply(body: ReplyRequest) -> ReplyResponse:
+    """Stop recording, transcribe, and route the transcript into chat —
+    NOT into the thoughts table.
+
+    Flow:
+      1. /voice/start was called earlier (same as a normal capture).
+      2. User releases the press-hold; client POSTs here with session_id +
+         the current chat history.
+      3. We stop recording via VoiceService, transcribe via Whisper, then
+         hand the transcript to chat_agent.chat() and return the agent's
+         response in the same response body so the UI can render both turns.
+
+    The transcript is NEVER persisted to thoughts. This is conversation,
+    not memory.
+    """
+    global _recording, _current_session_id
+
+    if not _recording:
+        raise HTTPException(status_code=409, detail="Not currently recording")
+
+    voice = get_voice_service()
+    try:
+        chunk = await voice.stop_recording_and_process(body.session_id)
+    except Exception as e:
+        _recording = False
+        _current_session_id = None
+        raise HTTPException(status_code=500, detail=f"Failed to process reply audio: {e}")
+
+    _recording = False
+    _current_session_id = None
+
+    if chunk is None or not chunk.raw_text.strip():
+        raise HTTPException(status_code=204, detail="Empty audio (silence trimmed away)")
+
+    transcript = chunk.raw_text.strip()
+    duration = chunk.audio_duration_sec
+
+    # Route transcript through the chat agent. History from client is
+    # already in the right shape ({role, content}).
+    from services.agent.chat_agent import chat as agent_chat
+    history_msgs = []
+    for m in body.history or []:
+        if isinstance(m, dict) and "role" in m and "content" in m:
+            history_msgs.append({"role": m["role"], "content": m["content"]})
+
+    try:
+        result = await agent_chat(transcript, history_msgs)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Transcribed '{transcript}' but chat failed: {e}",
+        )
+
+    return ReplyResponse(
+        transcript=transcript,
+        duration_sec=duration,
+        chat_response=result.get("response", ""),
+        tools_used=result.get("tools_used", []),
+        took_ms=result.get("took_ms", 0),
+        question_count=result.get("question_count", 0),
+        mode=result.get("mode", "answering"),
+        min_questions=result.get("min_questions", 0),
+        bypassed=result.get("bypassed", False),
+    )

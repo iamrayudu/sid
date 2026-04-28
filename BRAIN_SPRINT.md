@@ -54,10 +54,10 @@ is run, walk this checklist:
 
 | ID | Title | Status | Commit |
 |---|---|---|---|
-| B1 | Milestone routine + endpoint + UI | pending | — |
-| B2 | Task closure flow + closure prompt UI | pending | — |
-| B3 | Interrogation enforcement in chat_agent | pending | — |
-| B5 | Press-hold reply routing | pending | — |
+| B1 | Milestone routine + endpoint + UI | ✅ done | `751d096` |
+| B2 | Task closure flow + closure prompt UI | ✅ done | `6c971c8` |
+| B3 | Interrogation enforcement in chat_agent | ✅ done | `5f138d5` |
+| B5 | Press-hold reply routing | ✅ done | (this commit) |
 
 When a task is complete, change `pending` to the commit SHA and tick the relevant
 checkboxes inside that task.
