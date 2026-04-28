@@ -73,6 +73,53 @@ async def queue_depth() -> int:
         return int(row["c"]) if row else 0
 
 
+async def list_failed(limit: int = 50) -> list:
+    """Return rows that exceeded MAX_RETRIES (status='failed')."""
+    from services.memory.db import get_db_manager
+    async with get_db_manager().get_connection() as db:
+        cur = await db.execute(
+            """
+            SELECT id, priority, retries, last_error, enqueued_at, processed_at
+            FROM processing_queue
+            WHERE status = 'failed'
+            ORDER BY processed_at DESC NULLS LAST, enqueued_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def retry_chunk(chunk_id: str) -> bool:
+    """Reset a failed chunk back to pending for the worker to pick up.
+    Returns True if a row was updated, False if no matching failed row."""
+    from services.memory.db import get_db_manager
+    async with get_db_manager().get_connection() as db:
+        cur = await db.execute(
+            """
+            UPDATE processing_queue
+            SET status = 'pending', retries = 0, retry_after = NULL, last_error = NULL
+            WHERE id = ? AND status = 'failed'
+            """,
+            (chunk_id,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def delete_chunk(chunk_id: str) -> bool:
+    """Permanently remove a queue row (typically a failed one the user gave up on)."""
+    from services.memory.db import get_db_manager
+    async with get_db_manager().get_connection() as db:
+        cur = await db.execute(
+            "DELETE FROM processing_queue WHERE id = ? AND status IN ('failed', 'done')",
+            (chunk_id,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
 # ── Internal worker ──────────────────────────────────────────────────────────
 
 async def _recover_orphans() -> None:

@@ -14,7 +14,7 @@ from config.settings import get_settings
 from services.memory import get_store
 from services.llm_gateway import get_gateway
 
-from interface.api.routes import voice, thoughts, agent, stats
+from interface.api.routes import voice, thoughts, agent, stats, queue
 
 logger = logging.getLogger("sid.api")
 
@@ -127,6 +127,7 @@ app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(thoughts.router, prefix="/api/thoughts", tags=["thoughts"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(stats.router, prefix="/api/stats", tags=["stats"])
+app.include_router(queue.router, prefix="/api/queue", tags=["queue"])
 
 
 @app.get("/", include_in_schema=False)

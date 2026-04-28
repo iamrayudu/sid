@@ -180,8 +180,8 @@ async def chat(
     tools_used: List[str] = []
 
     gateway = get_gateway()
-    model = gateway.model_for("agent_chat")
-    client = gateway.client
+    # config_for() honours per-purpose route overrides (e.g. agent_chat → anthropic).
+    model, _provider, client = gateway.config_for("agent_chat")
 
     messages: List[Dict[str, str]] = [{"role": "system", "content": _SYSTEM}]
     if history:

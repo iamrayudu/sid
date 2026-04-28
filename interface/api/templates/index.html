@@ -223,6 +223,40 @@
   .result:last-child { border-bottom: 0; }
   .result .meta { color: var(--muted); font-size: 11px; margin-top: 3px; }
 
+  /* --- FAILED ITEMS -------------------------------------------------------- */
+  .failed-item {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .failed-item:last-child { border-bottom: 0; }
+  .failed-item .body { flex: 1; min-width: 0; }
+  .failed-item .err {
+    color: var(--danger);
+    font-size: 11px;
+    margin-top: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .failed-item .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .failed-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .failed-actions button {
+    padding: 4px 9px;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .failed-actions button:hover { background: var(--border); color: var(--text); }
+  .failed-actions .retry:hover { color: var(--accent); border-color: var(--accent); }
+  .failed-actions .drop:hover  { color: var(--danger); border-color: var(--danger); }
+
   .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
 
   footer {
@@ -275,6 +309,12 @@
   <div id="searchSection" class="panel" style="display:none; margin-bottom:16px;">
     <h2>Search results</h2>
     <div id="searchResults"></div>
+  </div>
+
+  <!-- FAILED QUEUE (only shown when items exist) -->
+  <div id="failedSection" class="panel" style="display:none; margin-bottom:16px; border-color: var(--danger);">
+    <h2 style="color:var(--danger)">Failed processing <span id="failedCount" style="font-weight:400;color:var(--muted)"></span></h2>
+    <div id="failedList"></div>
   </div>
 
   <!-- TIMELINE -->
@@ -553,16 +593,70 @@ searchBox.addEventListener("input", () => {
   }, 280);
 });
 
+// ── Failed queue ─────────────────────────────────────────────────────────────
+const failedSection = document.getElementById("failedSection");
+const failedList    = document.getElementById("failedList");
+const failedCount   = document.getElementById("failedCount");
+
+async function loadFailed() {
+  try {
+    const r = await api("/api/queue/failed?limit=20");
+    const items = r.failed || [];
+    if (!items.length) {
+      failedSection.style.display = "none";
+      return;
+    }
+    failedSection.style.display = "block";
+    failedCount.textContent = `(${r.count})`;
+    failedList.innerHTML = items.map(it => `
+      <div class="failed-item" id="failed-${escapeHtml(it.id)}">
+        <div class="body">
+          <div>chunk ${escapeHtml(it.id.slice(0, 8))}…  <span style="color:var(--muted)">priority ${it.priority}, ${it.retries} tries</span></div>
+          <div class="err" title="${escapeHtml(it.last_error || '')}">${escapeHtml(it.last_error || 'no error recorded')}</div>
+          <div class="meta">enqueued ${escapeHtml((it.enqueued_at || '').slice(0,16).replace('T', ' '))}</div>
+        </div>
+        <div class="failed-actions">
+          <button class="retry" onclick="retryFailed('${escapeHtml(it.id)}')">retry</button>
+          <button class="drop"  onclick="dropFailed('${escapeHtml(it.id)}')">drop</button>
+        </div>
+      </div>
+    `).join("");
+  } catch (e) {
+    // Silent — don't litter the UI with errors for an optional surface.
+  }
+}
+
+async function retryFailed(id) {
+  try {
+    await api(`/api/queue/retry/${encodeURIComponent(id)}`, { method: "POST" });
+    const el = document.getElementById("failed-" + id);
+    if (el) el.style.opacity = "0.4";
+    setTimeout(loadFailed, 600);
+  } catch (e) { alert("Retry failed: " + e.message); }
+}
+
+async function dropFailed(id) {
+  if (!confirm("Permanently drop this chunk?")) return;
+  try {
+    await api(`/api/queue/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const el = document.getElementById("failed-" + id);
+    if (el) el.remove();
+    loadFailed();
+  } catch (e) { alert("Drop failed: " + e.message); }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadTimeline();
 loadTasks();
 loadStats();
+loadFailed();
 pollStatus();
 
 setInterval(pollStatus,   3000);
 setInterval(loadStats,   30000);
 setInterval(loadTimeline, 20000);
 setInterval(loadTasks,   20000);
+setInterval(loadFailed,  30000);
 </script>
 </body>
 </html>

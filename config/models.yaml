@@ -1,91 +1,124 @@
 # SID Model Configuration
 # ─────────────────────────────────────────────────────────────────────────────
-# PURPOSE-BASED routing: every task maps to a model independently.
-# To swap any model: change the value here. Zero code changes needed.
-# All names must match exactly what `ollama list` shows.
+# Multi-provider, purpose-based routing. Three layers:
+#   1. providers — connection details, one block per backend
+#   2. models    — default model per purpose (uses default_provider)
+#   3. routes    — optional per-purpose override of {provider, model}
+#   4. fallback  — optional cloud fallback when Ollama is "stuck"
+#
+# To swap any model: change one line. Zero code changes needed.
+# All Ollama names must match exactly what `ollama list` shows.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Default provider for any purpose without an explicit route.
+default_provider: ollama
+
+providers:
+  ollama:
+    enabled: true
+    base_url: http://localhost:11434/v1
+    api_key: ollama          # required by SDK but not used by Ollama
+    native_json_schema: true
+
+  openai:
+    enabled: false           # flip to true once OPENAI_API_KEY is set
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    native_json_schema: true
+
+  anthropic:
+    enabled: false           # flip to true once ANTHROPIC_API_KEY is set
+    # OpenAI-compatible Anthropic endpoint (uses same SDK with extra headers).
+    base_url: https://api.anthropic.com/v1
+    api_key_env: ANTHROPIC_API_KEY
+    # Anthropic's OpenAI-compatible endpoint does not support response_format=json_schema.
+    # When false, the gateway uses prompt-based JSON extraction instead.
+    native_json_schema: false
+    extra_headers:
+      anthropic-version: "2023-06-01"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Default model per purpose (resolved on default_provider).
+# A bare string is shorthand; use routes: below to override provider per purpose.
+# ─────────────────────────────────────────────────────────────────────────────
 models:
-  # Stage 1: fast classification + text cleaning. Speed > depth.
-  # Alternatives: gemma3:4b, llama3.2:3b
   stage1: qwen2.5:3b
-
-  # Stage 2: deep extraction — tasks, entities, relationships, intent.
-  # Alternatives: gemma3:12b, phi4:14b, qwen2.5:32b
   stage2: qwen2.5:14b
-
-  # Conversational reasoning over memory. Interrogation mode (5-20 questions).
-  # Alternatives: phi4:14b, gemma3:27b
   agent_chat: qwen2.5:14b
-
-  # Morning brief: structured day plan + narrative from pending + yesterday.
   morning: qwen2.5:14b
-
-  # Evening reflection: journal narrative + task completion analysis.
   evening: qwen2.5:14b
-
-  # 4-hour check-in: brief status question. Must be fast.
   checkin: qwen2.5:3b
-
-  # Weekly review: deep behavioral autopsy. Use strongest available model.
-  # Alternatives: phi4:14b (best for reasoning), gemma3:27b, qwen2.5:32b
   weekly: qwen2.5:14b
-
-  # Critique engine: behavioral profiling, negligence detection.
-  # phi4:14b is exceptional at analytical/critical reasoning.
   critique: qwen2.5:14b
-
-  # Document agent: reading comprehension + extraction from PDF/text/markdown.
-  # Alternatives: gemma3:12b (excellent at document understanding)
   document: qwen2.5:14b
-
-  # Milestone planning: breaks tasks into steps via conversation.
   milestone: qwen2.5:14b
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Embedding model — sentence-transformers, runs locally on CPU. NOT Ollama.
-# WARNING: changing this invalidates ALL existing LanceDB vectors.
-# If changed: delete ~/.sid/vectors/ and let SID rebuild on next startup.
+# Optional: per-purpose explicit provider+model overrides.
+# Uncomment and adjust to route specific purposes to cloud models.
+#
+# routes:
+#   weekly:    { provider: anthropic, model: claude-opus-4-7 }
+#   critique:  { provider: anthropic, model: claude-opus-4-7 }
+#   morning:   { provider: openai,    model: gpt-4o-mini }
+# ─────────────────────────────────────────────────────────────────────────────
+routes: {}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cloud fallback: when Ollama is "stuck" (see SID_OLLAMA_STUCK_THRESHOLD_SECS),
+# the gateway will route the next call here instead of failing. Cost is logged.
+# Disabled by default to avoid surprise charges.
+#
+# fallback:
+#   enabled: true
+#   provider: openai
+#   model: gpt-4o-mini
+# ─────────────────────────────────────────────────────────────────────────────
+fallback:
+  enabled: false
+  provider: openai
+  model: gpt-4o-mini
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Embedding model — sentence-transformers, runs locally on CPU. NOT through
+# any provider above. Changing this invalidates ALL existing LanceDB vectors;
+# delete ~/.sid/vectors/ and let SID rebuild on next startup.
 # ─────────────────────────────────────────────────────────────────────────────
 embedding: all-MiniLM-L6-v2
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Ollama connection
-# ─────────────────────────────────────────────────────────────────────────────
-ollama_base_url: http://localhost:11434
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Whisper STT model (trade speed vs accuracy)
-# tiny.en  — 39MB,  fastest, rough accuracy
-# base.en  — 74MB,  good balance (default)
-# small.en — 244MB, more accurate, slower
+# tiny.en   — 39MB,  fastest, rough accuracy
+# base.en   — 74MB,  good balance (default)
+# small.en  — 244MB, more accurate, slower
 # ─────────────────────────────────────────────────────────────────────────────
 whisper_model: base.en
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Cost tracking (local = $0, tracked for capacity planning)
-# Set real values here if cloud fallback is added later.
+# Cost tracking. Local = $0; cloud values track real spend.
+# Numbers below are per 1k tokens (input). Update as pricing changes.
 # ─────────────────────────────────────────────────────────────────────────────
 cost_per_1k_tokens:
   default: 0.0
+  qwen2.5:3b: 0.0
+  qwen2.5:14b: 0.0
+  gpt-4o-mini: 0.00015
+  gpt-4o: 0.0025
+  claude-opus-4-7: 0.015
+  claude-sonnet-4-6: 0.003
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Hardware reference — pick models based on available RAM
+# Hardware reference (Ollama)
 #
 # Model           RAM      Latency    Best for
 # qwen2.5:3b      ~2GB     1-2s       stage1, checkin
 # qwen2.5:7b      ~4GB     3-4s       balanced quality/speed
 # qwen2.5:14b     ~8GB     8-12s      stage2, chat, routines (default)
 # qwen2.5:32b     ~18GB    25s        near GPT-4 quality locally
-# gemma3:4b       ~2.5GB   2s         stage1 alt, excellent instructions
 # gemma3:12b      ~7GB     6-8s       stage2 alt, document extraction
-# gemma3:27b      ~15GB    20s        weekly/critique with more RAM
 # phi4:14b        ~8GB     8-12s      best for critique + reasoning
-# llama3.2:3b     ~2GB     1-2s       stage1 alt, very reliable
-# llama3.1:8b     ~5GB     4-5s       general purpose alternative
 #
-# Recommended:
-# 16GB RAM → qwen2.5:3b (stage1/checkin) + qwen2.5:14b (everything else)
+# 16GB RAM → qwen2.5:3b + qwen2.5:14b
 # 32GB RAM → add phi4:14b for critique/weekly
 # 64GB RAM → qwen2.5:32b for all deep tasks
 # ─────────────────────────────────────────────────────────────────────────────
