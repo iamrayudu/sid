@@ -373,6 +373,13 @@ via /voice/start + /voice/stop.
 
 ## After Brain Sprint A — Next Up
 
+**→ Active sprint is now `SPRINT_5.md` (Mac Desktop App + File Vault).**
+Brain Sprint B was deferred because routine quality work needs ~2 weeks
+of real captures. Sprint 5 is the prerequisite to actually accumulating
+that data — turning SID from a script you run to an app you live with.
+
+
+
 **Brain Sprint B** (needs ~2 weeks of real captures before tuning makes sense):
 
 - B4 — Proactive surfacing in chat ("you've mentioned X 7 times, no progress")

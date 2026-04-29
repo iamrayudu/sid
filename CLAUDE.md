@@ -86,9 +86,9 @@ sid/
 | Structured DB | **SQLite** via aiosqlite | `~/.sid/sid.db`, WAL mode |
 | Scheduler | APScheduler (AsyncIOScheduler) | Wired into FastAPI lifespan |
 | API | FastAPI | localhost:8765 |
-| Folder watching | `watchdog` | `~/.sid/inbox/` for documents |
+| Folder watching | `watchdog` | `~/SID/inbox/` (visible vault, see Storage Layout) |
 | PDF parsing | `PyMuPDF` (fitz) | Document agent |
-| macOS UI | `rumps` | Menubar app (Phase 4) |
+| macOS UI | `rumps` | Menubar app (Sprint 5) |
 | Config | pydantic-settings + YAML | |
 
 ---
@@ -101,7 +101,9 @@ sid/
 2. **Model names live in `config/models.yaml`** — never hardcoded in service files. The gateway
    reads this file. Swapping Gemma for Qwen = one line in YAML.
 
-3. **LanceDB and SQLite live in `~/.sid/`** — all user data in one portable directory.
+3. **Storage layout is split** (locked Sprint 5): `~/SID/` is the **visible vault** the user
+   browses in Finder; `~/.sid/` is **internal data** (DB, vectors, FSM state) the user never
+   touches. See "Storage Layout" section below.
 
 4. **Agent FSM state CAPTURING blocks ALL interruptions** — scheduler, check-ins, notifications
    — nothing fires while the user is recording. Voice is sacred.
@@ -120,6 +122,49 @@ sid/
 
 10. **Critique data accumulates forever** — never delete behavioral logs. They become more
     valuable the longer SID runs.
+
+---
+
+## Storage Layout (Locked Sprint 5)
+
+Two directories. The split is intentional and **non-negotiable** for new agents:
+
+```
+~/SID/                          ← VISIBLE vault. User-facing. Browsable in Finder.
+├── README.txt                  ← explains the layout
+├── inbox/                      ← single drop point. Anything here gets ingested.
+├── notes/                      ← persistent text/markdown notes (re-watched on edit)
+├── processed/<YYYY-MM-DD>/     ← auto-archive after successful ingest
+├── flagged/                    ← parse failures (with .reason file alongside)
+└── exports/                    ← daily journal exports, weekly review files
+
+~/.sid/                         ← HIDDEN internal data. User never touches.
+├── sid.db                      ← SQLite (WAL)
+├── vectors/                    ← LanceDB
+├── agent_state.json            ← FSM persistence (last_checkin, etc.)
+├── sid.log                     ← Server log (rolled by launcher)
+└── audio_cache/                ← (future) raw audio backups
+```
+
+### Rules
+
+- **`~/SID/` is the user's vault.** They open it in Finder. Files there are theirs.
+- **`~/.sid/` is the daemon's data.** Treat it like a database directory.
+- **Inbox is single-drop.** Don't make users learn folder taxonomy. SID infers type.
+- **Notes folder is re-watched on edit** (Obsidian-style). Editing a note re-ingests
+  it, replacing the previous Thought row (same `thought_id` keyed by file path hash).
+- **Processed files are auto-archived** to `processed/YYYY-MM-DD/<original-name>` — keeps
+  inbox clean, archive is recoverable by date.
+- **Flagged files stay in flagged/** with a sibling `<name>.reason` text file explaining
+  what went wrong (parse error, unsupported format, etc.).
+- **Migration from `~/Documents/SID/`**: setup script moves any existing files at first run.
+
+### Why split visible / hidden
+
+Users need to *see* what SID has. They also need to *not see* the SQLite WAL files,
+LanceDB internal index, FSM state JSON. Splitting visible-vault from internal-data is
+the simplest mental model that satisfies both. `~/SID/` is browsable; `~/.sid/` is
+treated as opaque (back it up, don't peek).
 
 ---
 
@@ -170,7 +215,7 @@ llama3.1:8b   ~5GB RAM   ~4-5s    Best for: general purpose alternative
 Recorded from original planning conversations. These are final.
 
 ### Input
-- **Push-to-talk** for voice capture (V1). Continuous listening is Phase 5.
+- **Push-to-talk** for voice capture (V1). Continuous listening is later.
 - **Tap** = start/stop new thought capture (new RawChunk → pipeline)
 - **Press-hold** = reply to agent's question (same voice flow, different routing)
 - Auto-stop at **60 seconds** per chunk — enforced in recorder callback
@@ -304,18 +349,62 @@ INTERFACE
 - [x] /voice/start writes session row, /voice/stop increments thought_count + end_time
 - [x] VoiceService lazy-loads VAD + Whisper on first start_recording() (was eager in __init__)
 
-### Phase 4 🔨 Next Up
-- [ ] Schema migration: task lifecycle columns (milestone_parent_id, percentage_complete,
-      time_estimate_hours, next_step, closure_note); task_closures + weekly_records tables
-- [ ] services/agent/routines/milestone.py — task breakdown via conversation
-- [ ] interface/api/templates/index.html — minimal web UI (timeline + tasks + chat)
-- [ ] interface/desktop/ — rumps menubar app (record button, status, quick chat)
-- [ ] macOS notifications — osascript silent + afplay escalating alarm
-- [ ] .env.example template
-- [ ] Persist scheduler last_checkin to DB (currently in-memory, resets on restart)
-- [ ] Schema migration runner (Alembic-style or simple version table)
+### Phase 4 ✅ Complete (commit 91cb8f7)
+- [x] Schema migration: task lifecycle columns + task_closures + weekly_records tables
+- [x] FSM persistence: ~/.sid/agent_state.json (last_checkin survives restarts)
+- [x] Web UI rebuild: tasks panel, chat box, type-coloured timeline, sticky header
+- [x] /api/agent/tasks + /api/agent/recap endpoints
+- [x] chat_agent metrics: every agent_chat call records to llm_calls
 
-### Phase 5+ 🔭 Future Vision
+### Sprint 2 ✅ Complete (commit 63f9c26) — Resilience
+- [x] Persistent SQLite-backed processing_queue (replaces in-memory asyncio.Queue)
+- [x] Crash-safe: orphaned 'processing' rows reset to 'pending' on startup
+- [x] Priority lanes: voice=1, document=5; voice always cuts the document line
+- [x] Confidence-skip: Stage 1 conf < 0.4 routes straight to assemble (no Stage 2)
+- [x] Ollama health monitor: healthy / unhealthy / stuck classification, UI pills
+
+### Sprint 3 ✅ Complete (commit 8e53ce5) — Multi-provider gateway
+- [x] config/models.yaml restructured with providers block (ollama / openai / anthropic)
+- [x] gateway.config_for(purpose) → (model, provider, client) honours route overrides
+- [x] Anthropic native_json_schema=false path: prompt-based JSON extraction
+- [x] Cloud fallback when Ollama is "stuck"; cost recorded per-call
+- [x] Failed-queue UI panel with retry/drop buttons
+
+### Brain Sprint A ✅ Complete (commits 751d096 → d77d300) — Agent intelligence
+- [x] B1 — Milestone routine: POST /api/agent/milestone + Plan button + chat tool
+- [x] B2 — Task closure flow: POST /api/agent/closure + closure modal in UI
+- [x] B3 — Interrogation enforcement: stateless gate, mode pill, "just answer" bypass
+- [x] B5 — Press-hold reply routing: POST /api/voice/reply (chat, not memory)
+
+### Sprint 5 🔨 Active — Mac Desktop App + File Vault
+**Plan: see `SPRINT_5.md` for full hand-off contract.**
+Locked decisions (2026-04-28):
+- Vault at `~/SID/` (visible) + `~/.sid/` (internal data)
+- Single-drop `inbox/`, auto-archive to `processed/YYYY-MM-DD/`
+- `notes/` re-watched on edit (Obsidian-style)
+- rumps menubar + browser UI (no PyWebView yet)
+- Manual launch only (no launchd / auto-start at login until trusted)
+
+Tasks:
+- [ ] S5.1 — Vault restructure: ~/SID/ tree, watcher handles inbox + notes,
+            auto-archive, flag failures with .reason file, migrate from
+            ~/Documents/SID/
+- [ ] S5.2 — rumps menubar app: status, Open SID, quick record, Open vault,
+            suppress, trigger morning/evening, quit
+- [ ] S5.3 — Launcher: run.sh + run.command, server lifecycle managed by menubar
+- [ ] S5.4 — setup.sh wizard: idempotent first-run check + bootstrap
+- [ ] S5.5 — SETUP.md + final CLAUDE.md polish
+
+### Brain Sprint B 🔭 Deferred (needs ~2 weeks of real captures)
+- [ ] B4 — Proactive surfacing in chat ("you've mentioned X 7 times, no progress")
+- [ ] B6 — Critique → check-in coupling (negligence flags seed check-in questions)
+- [ ] B7 — Memory consolidation (re-relink old thoughts as new ones arrive)
+
+### Sprint 4 🔭 Deferred — Tests + dev mode
+- [ ] pytest harness with in-memory SQLite + temp LanceDB + MockGateway
+- [ ] SID_DEV_MODE=true → MockGateway → iterate UI without Ollama
+
+### Future Vision
 - Android (Nothing 2a): same backend, new interface layer
 - macOS launchd: OS-level scheduling, zero battery when idle
 - Camera/vision module: photo → extract → same memory pipeline
