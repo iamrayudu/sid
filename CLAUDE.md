@@ -123,6 +123,15 @@ sid/
 10. **Critique data accumulates forever** — never delete behavioral logs. They become more
     valuable the longer SID runs.
 
+11. **Auto-monitor by default** (locked Stability Sprint, 2026-04-28). SID is not a passive
+    retrieval interface. Every meaningful user input — voice capture, dropped document,
+    typed chat message, voice reply — passes through Stage 1 classification and, unless
+    classified as `random`, is persisted as a Thought and run through the full pipeline.
+    Sudheer's intent: *"On day 100 this has more value. We use AI to build, so AI monitors
+    every step."* Skip rules: `type=='random'` is dropped; `type=='question'` with
+    `confidence<0.5` is dropped (pure retrieval); everything else is captured. The user
+    can always force-save with an explicit button if Stage 1 misclassified.
+
 ---
 
 ## Storage Layout (Locked Sprint 5)
@@ -376,7 +385,20 @@ INTERFACE
 - [x] B3 — Interrogation enforcement: stateless gate, mode pill, "just answer" bypass
 - [x] B5 — Press-hold reply routing: POST /api/voice/reply (chat, not memory)
 
-### Sprint 5 🔨 Active — Mac Desktop App + File Vault
+### Stability Sprint 🔨 Active — Bug fixes + auto-monitor (paused Sprint 5)
+**Plan: see `STABILITY.md` for full hand-off contract.**
+First end-to-end test on 2026-04-28 surfaced 4 issues: stop-recording broken,
+"tasks not captured from chat" (auto-extract missing), mic UX bugs, logging
+too thin. Fixing the substrate before layering the Mac desktop surface.
+
+Tasks:
+- [ ] F1 — Recording lifecycle: debounce, /voice/cancel, server reconciliation
+- [ ] F2 — Eager-load voice models at server boot (default ON)
+- [ ] F3 — Mic device probe + clear permission error
+- [ ] F4 — Structured logging to ~/.sid/sid.log (rotated)
+- [ ] F5 — Auto-extract chat + save_thought tool + Save button
+
+### Sprint 5 ⏸ Paused — Mac Desktop App + File Vault
 **Plan: see `SPRINT_5.md` for full hand-off contract.**
 Locked decisions (2026-04-28):
 - Vault at `~/SID/` (visible) + `~/.sid/` (internal data)
