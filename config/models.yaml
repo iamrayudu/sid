@@ -48,8 +48,8 @@ models:
   morning: qwen2.5:14b
   evening: qwen2.5:14b
   checkin: qwen2.5:3b
-  weekly: qwen2.5:14b
-  critique: qwen2.5:14b
+  weekly: phi4
+  critique: phi4
   document: qwen2.5:14b
   milestone: qwen2.5:14b
 
